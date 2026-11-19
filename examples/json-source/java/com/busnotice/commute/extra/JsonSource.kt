@@ -26,7 +26,7 @@ object JsonSource : StaticSource {
 
     private class Line(val id: String, val name: String, val subway: Boolean, val reverseId: String, val stops: List<StopPoint>)
 
-    private val lines: List<Line> by lazy {
+    private val allLines: List<Line> by lazy {
         val txt = Transit.appContext.assets.open("transit.json").bufferedReader().use { it.readText() }
         val arr = JSONObject(txt).getJSONArray("lines")
         (0 until arr.length()).map { i ->
@@ -43,13 +43,18 @@ object JsonSource : StaticSource {
         }
     }
 
+    override fun lines(region: String): List<SearchLine> =
+        allLines.groupBy { it.name }.map { (name, g) ->
+            SearchLine(name, g.first().subway, g.map { LineDir(it.id, it.stops.first().name, it.stops.last().name) })
+        }
+
     override fun search(key: String, region: String): SearchResult {
         val k = key.trim()
         if (k.isEmpty()) return SearchResult(emptyList(), emptyList())
-        val ls = lines.filter { it.name.contains(k) }.groupBy { it.name }.map { (name, g) ->
+        val ls = allLines.filter { it.name.contains(k) }.groupBy { it.name }.map { (name, g) ->
             SearchLine(name, g.first().subway, g.map { LineDir(it.id, it.stops.first().name, it.stops.last().name) })
         }
-        val st = lines.flatMap { l -> l.stops.map { l to it } }
+        val st = allLines.flatMap { l -> l.stops.map { l to it } }
             .filter { (_, s) -> s.name.contains(k) }
             .distinctBy { (l, s) -> s.name to l.subway }
             .map { (l, s) -> SearchStation(s.stopId, s.name, s.lat, s.lng, l.subway, s.name, s.name) }
@@ -57,13 +62,13 @@ object JsonSource : StaticSource {
     }
 
     override fun lineDetail(lineId: String, region: String): LineDetail {
-        val l = lines.first { it.id == lineId }
+        val l = allLines.first { it.id == lineId }
         return LineDetail(l.id, l.name, l.stops.first().name, l.stops.last().name, l.stops, l.reverseId)
     }
 
     /** 站点按名字归并：同名站 = 同一个站 */
     private fun stopAt(name: String, distanceM: Int): NearStop? {
-        val hits = lines.filter { l -> l.stops.any { it.name == name } }
+        val hits = allLines.filter { l -> l.stops.any { it.name == name } }
         if (hits.isEmpty()) return null
         return NearStop(
             stopId = name, name = name, distanceM = distanceM, isSubway = hits.all { it.subway },
@@ -75,7 +80,7 @@ object JsonSource : StaticSource {
     }
 
     override fun nearbyStops(lat: Double, lng: Double, region: String): List<NearStop> =
-        lines.flatMap { it.stops }
+        allLines.flatMap { it.stops }
             .map { it.name to Geo.distanceM(lat, lng, it.lat, it.lng) }
             .filter { it.second < 1000 }
             .sortedBy { it.second }

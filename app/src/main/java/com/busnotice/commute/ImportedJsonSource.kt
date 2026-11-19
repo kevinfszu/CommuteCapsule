@@ -68,6 +68,9 @@ object ImportedJsonSource : StaticSource {
     override fun search(key: String, region: String): SearchResult =
         doc?.let { JsonTransit.search(it, key, region) } ?: SearchResult(emptyList(), emptyList())
 
+    override fun lines(region: String): List<SearchLine> =
+        doc?.let { JsonTransit.lines(it, region) } ?: emptyList()
+
     override fun lineDetail(lineId: String, region: String): LineDetail =
         doc?.let { JsonTransit.lineDetail(it, lineId, region) } ?: error("尚未导入线路数据")
 

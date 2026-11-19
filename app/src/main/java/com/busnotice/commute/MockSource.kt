@@ -34,7 +34,7 @@ object MockSource : StaticSource, RealtimeSource {
     private val busNS = listOf("北门", "体育馆", "中心广场", "医院", "南湖公园", "南站")
     private val metro = listOf("西站", "大学城", "中心广场", "会展中心", "软件园", "机场")
 
-    private val lines: List<MockLine> = run {
+    private val allLines: List<MockLine> = run {
         val ew = busEW.indices.map { pt((it - 3) * STEP_M, 0.0) }
         val ns = busNS.indices.map { pt(0.0, (2 - it) * STEP_M) }
         val mt = metro.indices.map { pt((it - 2) * STEP_M * 2, 150.0) }
@@ -48,7 +48,7 @@ object MockSource : StaticSource, RealtimeSource {
         )
     }
 
-    private fun line(id: String) = lines.first { it.id == id }
+    private fun line(id: String) = allLines.first { it.id == id }
     private fun reverseOf(id: String) = if (id.endsWith("r")) id.dropLast(1) else id + "r"
     private fun idOf(l: MockLine, i: Int) = "${l.id}-${i + 1}"
     private fun phyId(name: String) = "p-$name"
@@ -57,13 +57,16 @@ object MockSource : StaticSource, RealtimeSource {
         StopPoint(idOf(l, it), l.names[it], it + 1, l.coords[it].first, l.coords[it].second)
     }
 
+    override fun lines(region: String): List<SearchLine> =
+        allLines.groupBy { it.name }.map { (name, g) ->
+            SearchLine(name, g.first().subway, g.map { LineDir(it.id, it.names.first(), it.names.last()) })
+        }
+
     override fun search(key: String, region: String): SearchResult {
         val k = key.trim().removeSuffix("路")
         if (k.isEmpty()) return SearchResult(emptyList(), emptyList())
-        val ls = lines.filter { it.name.contains(k) }.groupBy { it.name }.map { (name, g) ->
-            SearchLine(name, g.first().subway, g.map { LineDir(it.id, it.names.first(), it.names.last()) })
-        }
-        val st = lines.flatMap { l -> l.names.indices.map { l to it } }
+        val ls = lines(region).filter { it.name.contains(k) }
+        val st = allLines.flatMap { l -> l.names.indices.map { l to it } }
             .filter { (l, i) -> l.names[i].contains(k) }
             .distinctBy { (l, i) -> l.names[i] to l.subway }
             .map { (l, i) ->
@@ -78,7 +81,7 @@ object MockSource : StaticSource, RealtimeSource {
     }
 
     private fun stopsAt(name: String, subway: Boolean?, distanceM: Int): NearStop? {
-        val hits = lines.filter { (subway == null || it.subway == subway) && name in it.names }
+        val hits = allLines.filter { (subway == null || it.subway == subway) && name in it.names }
         if (hits.isEmpty()) return null
         return NearStop(
             stopId = phyId(name), name = name, distanceM = distanceM, isSubway = hits.all { it.subway },
@@ -90,7 +93,7 @@ object MockSource : StaticSource, RealtimeSource {
     }
 
     override fun nearbyStops(lat: Double, lng: Double, region: String): List<NearStop> =
-        lines.flatMap { l -> l.names.indices.map { Triple(l.names[it], l.subway, Geo.distanceM(lat, lng, l.coords[it].first, l.coords[it].second)) } }
+        allLines.flatMap { l -> l.names.indices.map { Triple(l.names[it], l.subway, Geo.distanceM(lat, lng, l.coords[it].first, l.coords[it].second)) } }
             .filter { it.third < 1500 }
             .distinctBy { it.first to it.second }
             .sortedBy { it.third }
@@ -103,14 +106,14 @@ object MockSource : StaticSource, RealtimeSource {
         val name = if (stationName in metro) stationName
         else metro.indices.minByOrNull { Geo.distanceM(lat, lng, line("mt1").coords[it].first, line("mt1").coords[it].second) }?.let { metro[it] }
             ?: return emptyList()
-        return lines.filter { it.subway }.map { l ->
+        return allLines.filter { it.subway }.map { l ->
             SubwayDir("地铁1号线", "1号线", l.names.last(), 6 * 60, 23 * 60, l.id, l.names.indexOf(name) + 1)
         }
     }
 
     override fun metroStops(board: List<SubwayDir>, toLat: Double, toLng: Double, region: String): Int? {
         for (b in board) {
-            val l = lines.firstOrNull { it.id == b.dirId } ?: continue
+            val l = allLines.firstOrNull { it.id == b.dirId } ?: continue
             val j = l.coords.indices.minByOrNull { Geo.distanceM(toLat, toLng, l.coords[it].first, l.coords[it].second) } ?: continue
             val n = (j + 1) - b.order
             if (n > 0) return n
@@ -129,7 +132,7 @@ object MockSource : StaticSource, RealtimeSource {
     }
 
     override fun lineRealtime(q: RealtimeQuery): LineRealtime {
-        val l = lines.firstOrNull { it.id == q.lineId } ?: return LineRealtime.EMPTY
+        val l = allLines.firstOrNull { it.id == q.lineId } ?: return LineRealtime.EMPTY
         val k = q.stopIndex - 1
         if (k < 0 || k >= l.names.size) return LineRealtime.EMPTY
         val now = LocalTime.now().toSecondOfDay()

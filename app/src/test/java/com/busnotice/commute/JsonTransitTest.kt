@@ -68,6 +68,21 @@ class JsonTransitTest {
     }
 
     @Test
+    fun `lines groups directions and keeps loop labels`() {
+        val doc = JsonTransit.parse(sample)
+        val lines = JsonTransit.lines(doc, "test")
+        assertEquals(2, lines.size)
+
+        val metro13 = lines.first { it.name == "13号线" }
+        assertTrue(metro13.isSubway)
+        assertEquals(2, metro13.dirs.size)
+        assertEquals("", metro13.dirs.first().label)
+
+        val loop = lines.first { it.name == "11号线" }
+        assertEquals(listOf("内环", "外环"), loop.dirs.map { it.label })
+    }
+
+    @Test
     fun `search finds line by short key`() {
         val doc = JsonTransit.parse(sample)
         val result = JsonTransit.search(doc, "13", "test")

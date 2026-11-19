@@ -11,6 +11,13 @@ class MockSourceTest {
         assertTrue(r.lines.any { it.isSubway })
     }
 
+    @Test fun linesListsAllGroupedByName() {
+        val ls = MockSource.lines("")
+        assertEquals(3, ls.size)
+        assertTrue(ls.any { it.isSubway && it.dirs.isNotEmpty() })
+        assertTrue(ls.filter { !it.isSubway }.all { it.dirs.isNotEmpty() })
+    }
+
     @Test fun lineDetailHasReverse() {
         val d = MockSource.lineDetail("m2", "")
         assertEquals("m2r", d.reverseLineId)

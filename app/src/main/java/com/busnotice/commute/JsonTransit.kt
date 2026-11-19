@@ -131,21 +131,27 @@ object JsonTransit {
         )
     }
 
+    /** 全部线路按名称归并双向；环线带上方向名，供浏览界面直接展示 */
+    fun lines(doc: Doc, region: String): List<SearchLine> =
+        doc.lines.groupBy { it.name }.map { (name, group) ->
+            SearchLine(
+                name = name,
+                isSubway = group.first().subway,
+                dirs = group.map {
+                    LineDir(
+                        it.id, it.stops.first().name, it.stops.last().name,
+                        if (it.loop) it.dirLabel else "",
+                    )
+                },
+            )
+        }
+
     fun search(doc: Doc, key: String, region: String): SearchResult {
         val raw = key.trim()
         val k = norm(raw)
         if (k.isEmpty()) return SearchResult(emptyList(), emptyList())
 
-        val ls = doc.lines
-            .filter { norm(it.name).contains(k) }
-            .groupBy { it.name }
-            .map { (name, group) ->
-                SearchLine(
-                    name = name,
-                    isSubway = group.first().subway,
-                    dirs = group.map { LineDir(it.id, it.stops.first().name, it.stops.last().name) },
-                )
-            }
+        val ls = lines(doc, region).filter { norm(it.name).contains(k) }
 
         val st = doc.lines
             .flatMap { line -> line.stops.mapIndexed { i, stop -> Triple(line, i, stop) } }

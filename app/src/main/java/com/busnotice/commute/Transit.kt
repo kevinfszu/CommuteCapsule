@@ -25,7 +25,10 @@ data class NearStop(
 
 data class StopPoint(val stopId: String, val name: String, val order: Int, val lat: Double, val lng: Double)
 
-data class LineDir(val lineId: String, val firstStop: String, val lastStop: String)
+/** label 只在环线填方向名（如 内环/外环），普通线路留空由界面显示「开往 终点」 */
+data class LineDir(
+    val lineId: String, val firstStop: String, val lastStop: String, val label: String = "",
+)
 
 data class SearchLine(val name: String, val isSubway: Boolean, val dirs: List<LineDir>)
 
@@ -88,6 +91,8 @@ interface StaticSource {
     val id: String
     val title: String
     fun search(key: String, region: String): SearchResult
+    /** 全部可选线路（按名称归并双向），供「先选线路」的浏览界面使用 */
+    fun lines(region: String): List<SearchLine> = emptyList()
     fun lineDetail(lineId: String, region: String): LineDetail
     fun nearbyStops(lat: Double, lng: Double, region: String): List<NearStop> = emptyList()
     fun stationLines(siteId: String, sameNameId: String, region: String): List<NearStop> = emptyList()
@@ -216,6 +221,7 @@ object Transit {
     private fun reg(r: String) = r.ifEmpty { region }
 
     fun search(key: String, region: String = ""): SearchResult = static.search(key, reg(region))
+    fun lines(region: String = ""): List<SearchLine> = static.lines(reg(region))
     fun lineDetail(lineId: String, region: String = ""): LineDetail = static.lineDetail(lineId, reg(region))
     fun nearbyStops(lat: Double, lng: Double, region: String = ""): List<NearStop> = static.nearbyStops(lat, lng, reg(region))
     fun stationLines(siteId: String, sameNameId: String, region: String = ""): List<NearStop> =
