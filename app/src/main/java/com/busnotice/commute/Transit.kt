@@ -63,11 +63,15 @@ data class MetroRoute(val stations: List<MetroStation>, val durSec: Int) {
     val hops get() = stations.size - 1
 }
 
+/** 运行时导入结果，用于界面提示 */
+data class ImportSummary(val lineCount: Int, val stationCount: Int)
+
 /** 查地铁途经站 */
 data class MetroQuery(
     val region: String, val lineName: String,
     val fromName: String, val fromLat: Double, val fromLng: Double,
     val toName: String, val toLat: Double, val toLng: Double,
+    val dir: String = "",
 )
 
 /** 查某线路驶向等车站的来车 */
@@ -127,16 +131,12 @@ object Transit {
         synchronized(this) {
             if (inited) return
             appContext = ctx.applicationContext
-            val extras = runCatching {
-                val k = Class.forName(EXTRAS)
-                k.getMethod("getSources").invoke(k.getField("INSTANCE").get(null)) as List<*>
-            }.getOrNull().orEmpty()
-            for (o in extras) {
-                if (o is StaticSource && static === NoSource) static = o
-                if (o is RealtimeSource && realtime == null) realtime = o
+            if (ImportedJsonSource.load(ctx)) {
+                // 运行时导入的数据优先于 src/extra，避免导入后仍被扩展源覆盖
+                static = ImportedJsonSource
+            } else {
+                installExtras()
             }
-            // 什么都没接：用内置的虚构「演示城市」，装上就能把流程走一遍
-            if (static === NoSource) { static = MockSource; if (realtime == null) realtime = MockSource }
             val sp = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             var r = sp.getString(KEY_REGION, "").orEmpty()
             if (r.isEmpty()) {
@@ -157,6 +157,44 @@ object Transit {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_REGION, region).apply()
     }
 
+    /** 导入 JSON 并立即切换为当前静态数据源；失败时抛异常，旧数据保持不变。 */
+    fun importJson(ctx: Context, text: String): ImportSummary = synchronized(this) {
+        val doc = ImportedJsonSource.import(ctx, text)
+        static = ImportedJsonSource
+        realtime = null
+        MetroRoutes.clear(ctx)
+        if (region.isEmpty() && doc.region.isNotEmpty()) setRegion(ctx, doc.region)
+        ImportSummary(doc.lineCount, doc.stationCount)
+    }
+
+    /** 删除导入的数据，恢复 src/extra 扩展源；没有扩展则回到演示城市。 */
+    fun clearImported(ctx: Context) {
+        synchronized(this) {
+            ImportedJsonSource.clear(ctx)
+            MetroRoutes.clear(ctx)
+            static = NoSource
+            realtime = null
+            installExtras()
+        }
+    }
+
+    /** 加载 src/extra 里的静态/实时数据源；都没有时回退演示城市。 */
+    private fun installExtras() {
+        val extras = runCatching {
+            val k = Class.forName(EXTRAS)
+            k.getMethod("getSources").invoke(k.getField("INSTANCE").get(null)) as List<*>
+        }.getOrNull().orEmpty()
+        for (o in extras) {
+            if (o is StaticSource && static === NoSource) static = o
+            if (o is RealtimeSource && realtime == null) realtime = o
+        }
+        // 什么都没接：用内置的虚构「演示城市」，装上就能把流程走一遍
+        if (static === NoSource) {
+            static = MockSource
+            if (realtime == null) realtime = MockSource
+        }
+    }
+
     val hasRealtime get() = realtime != null
 
     private fun reg(r: String) = r.ifEmpty { region }
@@ -172,7 +210,9 @@ object Transit {
         static.metroStops(board, toLat, toLng, reg(region))
 
     fun metroRoute(c: Candidate, toName: String, toLat: Double, toLng: Double): MetroRoute? =
-        static.metroRoute(MetroQuery(reg(c.regionId), c.name, c.stopName, c.lat, c.lng, toName, toLat, toLng))
+        static.metroRoute(
+            MetroQuery(reg(c.regionId), c.name, c.stopName, c.lat, c.lng, toName, toLat, toLng, c.metroDir),
+        )
 
     /** 没有实时数据源时返回空（= 「无车」），引擎退回时刻表 / 估算 */
     fun lineRealtime(c: Candidate, lat: Double, lng: Double): LineRealtime =

@@ -9,6 +9,11 @@ object MetroRoutes {
     private const val PREFS = "metro_route"
     private const val TTL = 30L * 24 * 3600 * 1000
 
+    /** 导入/删除线路数据后清空缓存，避免旧站序命中同一条行程 */
+    fun clear(ctx: Context) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
+    }
+
     /** 这段地铁坐到哪：最后一段用下车站坐标，换乘段用下一段上车点 */
     fun target(t: Trip, i: Int): Triple<String, Double, Double>? {
         val c = t.legs[i].candidates.firstOrNull { it.isMetro() } ?: return null
