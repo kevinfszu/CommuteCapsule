@@ -37,7 +37,7 @@ object GeoWatch {
     fun register(ctx: Context, trip: Trip) {
         val lm = ctx.getSystemService(LocationManager::class.java) ?: return
         unregister(ctx, trip.id)
-        if (!trip.enabled || trip.dayMask == 0 || !can(ctx)) return
+        if (!trip.enabled || !trip.hasDays() || !can(ctx)) return
         val stops = trip.legs.firstOrNull()?.candidates.orEmpty()
             .filter { !it.lat.isNaN() && !it.lng.isNaN() }
             .distinctBy { "%.4f,%.4f".format(it.lat, it.lng) }.take(3)
@@ -61,7 +61,7 @@ object GeoWatch {
     /** 现在算不算这趟行程的出行时段：学到的通常上车时间 ±60 分钟，没学到就用时间窗前后各放 60 分钟 */
     fun inHabitBand(ctx: Context, trip: Trip): Boolean {
         val today = LocalDate.now()
-        if (trip.dayMask and (1 shl (today.dayOfWeek.value - 1)) == 0) return false
+        if (!trip.runsOn(today)) return false
         val t = LocalTime.now(); val m = t.hour * 60 + t.minute
         val typical = Learn.typicalBoard(ctx, trip.id, today.dayOfWeek.value)
         return if (typical != null) kotlin.math.abs(m - typical) <= 60

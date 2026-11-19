@@ -48,7 +48,7 @@ object BusSampler {
     fun window(t: Trip): IntRange = t.startMinute until minOf(t.endMinute + TAIL_MIN, LAST_MIN)
 
     private fun activeOn(t: Trip, day: LocalDate) =
-        t.enabled && t.legs.any { l -> l.candidates.any { valid(it) } } && t.dayMask and (1 shl (day.dayOfWeek.value - 1)) != 0
+        t.enabled && t.legs.any { l -> l.candidates.any { valid(it) } } && t.runsOn(day)
 
     fun inWindowNow(ctx: Context, now: LocalDateTime = LocalDateTime.now()): List<Trip> {
         val m = now.hour * 60 + now.minute

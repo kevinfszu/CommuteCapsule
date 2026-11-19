@@ -183,7 +183,7 @@ object DepartAdvisor {
             val nowMin = LocalDateTime.ofInstant(Instant.ofEpochMilli(now), zone).let { it.hour * 60 + it.minute }
             for (trip in TripStore.all(ctx)) {
                 if (!trip.enabled || Scheduler.ranToday(ctx, trip.id)) continue
-                if (trip.dayMask and (1 shl (today.dayOfWeek.value - 1)) == 0) continue
+                if (!trip.runsOn(today)) continue
                 if (nowMin < trip.startMinute - NOTIFY_AHEAD_MIN || nowMin >= trip.endMinute) continue
                 val bl = busLegOf(trip) ?: continue
                 if (trip.legs[bl].candidates.none { it.lineId == c.lineId && it.stationId == c.stationId }) continue

@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -58,6 +62,12 @@ import com.busnotice.commute.R
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -117,10 +127,22 @@ fun TripEditor(
                 Section("哪几天") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         DAY_NAMES.forEachIndexed { i, n ->
-                            val on = trip.dayMask and (1 shl i) != 0
-                            GlassChip(selected = on, onClick = { onChange(trip.copy(dayMask = trip.dayMask xor (1 shl i))) },
-                                label = n, modifier = Modifier.widthIn(min = 44.dp))
+                            val on = !trip.chinaWorkday && trip.dayMask and (1 shl i) != 0
+                            GlassChip(selected = on, onClick = {
+                                onChange(trip.copy(chinaWorkday = false, dayMask = trip.dayMask xor (1 shl i)))
+                            }, label = n, modifier = Modifier.widthIn(min = 44.dp))
                         }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        GlassChip(selected = trip.chinaWorkday, onClick = {
+                            onChange(trip.copy(chinaWorkday = !trip.chinaWorkday))
+                        }, label = "法定工作日")
+                    }
+                    if (trip.chinaWorkday) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("跳过法定节假日，调休上班的周末也会提醒。首次使用联网获取当年安排，之后离线；获取失败时按周一至周五。",
+                            fontSize = 12.sp, lineHeight = 17.sp, color = dim)
                     }
                 }
             }
@@ -514,13 +536,44 @@ fun TransitIcon(c: Candidate) {
 fun Stepper(label: String, value: Int, min: Int, max: Int, unit: String = "分钟", onChange: (Int) -> Unit) {
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
+    val focusManager = LocalFocusManager.current
+    var text by remember { mutableStateOf(value.toString()) }
+
+    fun commit() {
+        val parsed = text.toIntOrNull()?.coerceIn(min, max) ?: value
+        if (parsed != value) onChange(parsed)
+        text = parsed.toString()
+    }
+
+    LaunchedEffect(value) { if (text.toIntOrNull() != value) text = value.toString() }
+
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
         Text(label, fontSize = 14.sp, color = ink, modifier = Modifier.weight(1f))
         RoundButton(onClick = { onChange((value - 1).coerceAtLeast(min)) }, dark = dark, size = 34.dp) {
             Text("−", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ink)
         }
-        Text("$value $unit", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle,
-            modifier = Modifier.padding(horizontal = 10.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 8.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.White.copy(alpha = if (dark) 0.08f else 0.55f))
+                .padding(horizontal = 6.dp, vertical = 3.dp),
+        ) {
+            BasicTextField(
+                value = text,
+                onValueChange = { raw ->
+                    val digits = raw.filter(Char::isDigit).take(3)
+                    text = digits
+                    digits.toIntOrNull()?.takeIf { it in min..max }?.let(onChange)
+                },
+                singleLine = true,
+                textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink, textAlign = TextAlign.Center),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { commit(); focusManager.clearFocus() }),
+                modifier = Modifier.width(36.dp).onFocusChanged { if (!it.isFocused) commit() },
+            )
+            Text(" $unit", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle)
+        }
         RoundButton(onClick = { onChange((value + 1).coerceAtMost(max)) }, dark = dark, size = 34.dp) {
             Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ink)
         }

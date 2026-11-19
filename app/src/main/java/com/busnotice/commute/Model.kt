@@ -3,6 +3,7 @@ package com.busnotice.commute
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
 import java.util.UUID
 
 /** 一段发车间隔：from/to 为一天中的分钟，to 允许 1440（24:00） */
@@ -185,6 +186,7 @@ data class Trip(
     val name: String = "上班",
     val legs: List<Leg> = emptyList(),
     val dayMask: Int = 0b0011111,   // bit0=周一 ... bit6=周日
+    val chinaWorkday: Boolean = false, // true = 按中国法定工作日（忽略 dayMask）
     val startMinute: Int = 8 * 60,  // 出发时间窗
     val endMinute: Int = 8 * 60 + 30,
     val warmupMin: Int = 10,
@@ -196,9 +198,20 @@ data class Trip(
 ) {
     fun leaveMode() = leaveRadiusM > 0 && !leaveLat.isNaN() && !leaveLng.isNaN()
 
+    /** 这一天这趟行程要不要跑 */
+    fun runsOn(date: LocalDate, isStatutoryWorkday: (LocalDate) -> Boolean): Boolean =
+        if (chinaWorkday) isStatutoryWorkday(date)
+        else dayMask and (1 shl (date.dayOfWeek.value - 1)) != 0
+
+    fun runsOn(date: LocalDate): Boolean = runsOn(date, ChinaWorkdays::isWorkday)
+
+    /** 有没有任何可运行的日子（替代原来的 dayMask == 0 判断） */
+    fun hasDays(): Boolean = chinaWorkday || dayMask != 0
+
     fun timeText() = "%02d:%02d–%02d:%02d".format(startMinute / 60, startMinute % 60, endMinute / 60, endMinute % 60)
     fun daysText(): String {
-        if (dayMask == 0b0011111) return "工作日"
+        if (chinaWorkday) return "法定工作日"
+        if (dayMask == 0b0011111) return "周一至周五"
         if (dayMask == 0b1111111) return "每天"
         if (dayMask == 0b1100000) return "周末"
         val n = arrayOf("一", "二", "三", "四", "五", "六", "日")
@@ -208,7 +221,8 @@ data class Trip(
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("name", name)
         .put("legs", JSONArray().apply { legs.forEach { put(it.toJson()) } })
-        .put("dayMask", dayMask).put("startMinute", startMinute).put("endMinute", endMinute)
+        .put("dayMask", dayMask).put("chinaWorkday", chinaWorkday)
+        .put("startMinute", startMinute).put("endMinute", endMinute)
         .put("warmupMin", warmupMin).put("enabled", enabled)
         .put("leaveRadiusM", leaveRadiusM)
         .apply { if (!leaveLat.isNaN() && !leaveLng.isNaN()) put("leaveLat", leaveLat).put("leaveLng", leaveLng) }
@@ -220,6 +234,7 @@ data class Trip(
                 id = o.getString("id"), name = o.optString("name", "通勤"),
                 legs = (0 until arr.length()).map { Leg.fromJson(arr.getJSONObject(it)) },
                 dayMask = o.optInt("dayMask", 0b0011111),
+                chinaWorkday = o.optBoolean("chinaWorkday", false),
                 startMinute = o.optInt("startMinute", 480), endMinute = o.optInt("endMinute", 510),
                 warmupMin = o.optInt("warmupMin", 10), enabled = o.optBoolean("enabled", true),
                 leaveLat = o.optDouble("leaveLat"), leaveLng = o.optDouble("leaveLng"),

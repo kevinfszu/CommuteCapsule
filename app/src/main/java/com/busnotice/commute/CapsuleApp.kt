@@ -6,5 +6,6 @@ class CapsuleApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Transit.init(this)
+        ChinaWorkdays.init(this)
     }
 }

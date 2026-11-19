@@ -15,7 +15,7 @@ object Reverse {
         }.filter { it.candidates.isNotEmpty() }
         val trip = Trip(
             name = if (src.name.contains("上班")) "下班" else src.name + "·回程",
-            legs = legs, dayMask = src.dayMask,
+            legs = legs, dayMask = src.dayMask, chinaWorkday = src.chinaWorkday,
             startMinute = 18 * 60, endMinute = 18 * 60 + 30, warmupMin = src.warmupMin,
         )
         return Result(trip, warnings)

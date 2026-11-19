@@ -34,7 +34,8 @@ object Scheduler {
         am.cancel(pi)
         GeoWatch.register(ctx, plan)
         BusSampler.schedule(ctx)
-        if (!plan.enabled || plan.dayMask == 0 || plan.legs.isEmpty()) return
+        if (plan.chinaWorkday) ChinaWorkdays.ensure(LocalDate.now().year)
+        if (!plan.enabled || !plan.hasDays() || plan.legs.isEmpty()) return
         // 「离开某地才弹」：保存时正好在窗口里，一分钟后就开始留意
         if (plan.leaveMode() && inWindow(plan, LocalDateTime.now()) && !ranToday(ctx, plan.id)) {
             scheduleWatch(ctx, plan, System.currentTimeMillis() + 60_000L)
@@ -81,9 +82,8 @@ object Scheduler {
     }
 
     fun inWindow(plan: Trip, now: LocalDateTime): Boolean {
-        val bit = 1 shl (now.dayOfWeek.value - 1)
         val m = now.hour * 60 + now.minute
-        return plan.dayMask and bit != 0 && m >= plan.startMinute && m < plan.endMinute
+        return plan.runsOn(now.toLocalDate()) && m >= plan.startMinute && m < plan.endMinute
     }
 
     /** Wi-Fi 断开回调：马上看一次 */
@@ -108,10 +108,10 @@ object Scheduler {
 
     /** 下一次「时间窗开始 - 预热」的时刻；如果此刻正处于窗口内，返回 null 由调用方立即启动 */
     fun nextTrigger(plan: Trip, now: LocalDateTime, ctx: Context? = null): LocalDateTime? {
-        for (d in 0..7) {
+        // 法定节假日可能连放 9 天，向后多看几天
+        for (d in 0..14) {
             val day: LocalDate = now.toLocalDate().plusDays(d.toLong())
-            val bit = 1 shl (day.dayOfWeek.value - 1) // 周一=bit0
-            if (plan.dayMask and bit == 0) continue
+            if (!plan.runsOn(day)) continue
             val warm = if (plan.leaveMode()) 0 else plan.warmupMin
             // 学到了这天通常几点走：晚点再弹，不在公司白挂着胶囊
             val learned = if (ctx != null && !plan.leaveMode()) Learn.learnedStart(ctx, plan, day.dayOfWeek.value) else null
