@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.busnotice.commute.Candidate
+import com.busnotice.commute.HeadwayBand
 import com.busnotice.commute.Transit
 import com.busnotice.commute.NearStop
 import com.busnotice.commute.LineDir
@@ -130,6 +131,8 @@ private fun OrderDot(n: Int) {
 }
 
 private fun distText(m: Int) = if (m >= 1000) "%.1f 公里".format(m / 1000.0) else "$m 米"
+
+private fun secText(sec: Int) = "%d 分 %02d 秒".format(sec / 60, sec % 60)
 
 // ------------------------------------------------------------------ 公交
 
@@ -347,8 +350,8 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
     var searching by remember { mutableStateOf(false) }
     var chosen by remember { mutableStateOf<SearchStation?>(null) }
     var lineName by remember { mutableStateOf("") }
-    var headway by remember { mutableStateOf(5) }
-    var offPeak by remember { mutableStateOf(8) }
+    var headway by remember { mutableStateOf(300) }
+    var offPeak by remember { mutableStateOf(540) }
     var alight by remember { mutableStateOf("") }
 
     LaunchedEffect(query) {
@@ -405,6 +408,9 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                             modifier = Modifier.fillMaxWidth())
                     }
                     val lineDirs = ds.orEmpty().filter { Transit.sameLine(lineName, it) }
+                    val sel = lineDirs.firstOrNull { it.dest == dir } ?: lineDirs.firstOrNull()
+                    val bands = sel?.weekdayBands.orEmpty()
+                    val weekendBands = sel?.weekendBands.orEmpty().ifEmpty { bands }
                     if (lineDirs.isNotEmpty()) {
                         SectionLabel("方向")
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -413,22 +419,48 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                                     label = "开往 ${d.dest}")
                             }
                         }
-                        Text("本站首班 " + lineDirs.joinToString("，") { "往${it.dest} ${hhmm(it.firstMin.coerceAtLeast(0))}" },
-                            fontSize = 12.sp, color = Fuse.dim(dark))
+                        Text("本站首末班：" + lineDirs.joinToString("，") {
+                            "往${it.dest} ${hhmm(it.firstMin.coerceAtLeast(0))}–${hhmm(it.lastMin.coerceAtLeast(0))}"
+                        }, fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
+                        if (bands.isNotEmpty()) {
+                            SectionLabel("发车间隔")
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("工作日", fontSize = 12.sp, color = Fuse.dim(dark))
+                                bands.forEach { Text("${hhmm(it.from)}–${hhmm(it.to)}　每 ${secText(it.headwaySec)}",
+                                    fontSize = 13.sp, color = Fuse.ink(dark)) }
+                                Text("周末", fontSize = 12.sp, color = Fuse.dim(dark),
+                                    modifier = Modifier.padding(top = 4.dp))
+                                weekendBands.forEach { Text("${hhmm(it.from)}–${hhmm(it.to)}　每 ${secText(it.headwaySec)}",
+                                    fontSize = 13.sp, color = Fuse.ink(dark)) }
+                            }
+                            Text("时段来自线路数据，添加后可在「编辑」里逐段调整间隔。",
+                                fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
+                        } else {
+                            HeadwayStepper("高峰间隔", headway) { headway = it }
+                            HeadwayStepper("平峰间隔", offPeak) { offPeak = it }
+                        }
+                        Text("数据源没有地铁实时位置，按本站首班 + 间隔推算；间隔精确到秒。",
+                            fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
                     }
                     GlassField(alight, { alight = it }, label = "下车站（可选，用于到站提醒和回程）", singleLine = true,
                         modifier = Modifier.fillMaxWidth())
-                    Stepper("高峰几分钟一班", headway, 1, 30) { headway = it }
-                    Stepper("平峰几分钟一班", offPeak, 1, 30) { offPeak = it }
-                    Text("数据源没有地铁实时位置，按本站首班 + 间隔推算，显示为「约 X 分」。高峰指工作日 7–9 点、17–19:30。",
-                        fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
                     PillButton(onClick = {
-                        onPicked(Candidate(
-                            type = Candidate.Type.METRO, name = lineName.trim().ifEmpty { "地铁" },
-                            stopName = c.name, lat = c.lat, lng = c.lng, headwayMin = headway, offPeakHeadwayMin = offPeak,
-                            metroDir = dir, alightName = alight.trim(),
-                        ))
-                    }, modifier = Modifier.fillMaxWidth()) { Text("添加", fontWeight = FontWeight.Bold) }
+                            val peakSec = bands.minOfOrNull { it.headwaySec } ?: headway
+                            val offSec = bands.maxOfOrNull { it.headwaySec } ?: offPeak
+                            val manual = listOf(
+                                HeadwayBand(0, 7 * 60, offSec), HeadwayBand(7 * 60, 9 * 60 + 30, peakSec),
+                                HeadwayBand(9 * 60 + 30, 17 * 60, offSec), HeadwayBand(17 * 60, 19 * 60 + 30, peakSec),
+                                HeadwayBand(19 * 60 + 30, 24 * 60, offSec),
+                            )
+                            onPicked(Candidate(
+                                type = Candidate.Type.METRO, name = lineName.trim().ifEmpty { "地铁" },
+                                stopName = c.name, lat = c.lat, lng = c.lng,
+                                headwayMin = (peakSec + 59) / 60, offPeakHeadwayMin = (offSec + 59) / 60,
+                                metroDir = dir, alightName = alight.trim(),
+                                weekdayBands = if (bands.isEmpty()) manual else bands,
+                                weekendBands = if (bands.isEmpty()) manual else weekendBands,
+                            ))
+                        }, modifier = Modifier.fillMaxWidth()) { Text("添加", fontWeight = FontWeight.Bold) }
                   }
                 }
             }

@@ -219,7 +219,7 @@ object Decision {
      */
     private fun metroAdvice(options: List<Option>): Advice {
         val o = options.minBy { it.walkSec }
-        val hw = o.candidate.headwayMin.takeIf { it > 0 } ?: 7
+        val hw = o.candidate.peakHw()
         val trains = options.flatMap { op -> op.arrivals.map { op to it } }
             .map { (op, a) -> Triple(op, a, metroEtaSec(a)) }.filter { it.third >= -DWELL_SEC }
             .sortedBy { it.third }
@@ -315,9 +315,16 @@ object Decision {
         }
     }
 
-    /** 高峰（工作日 7:00–9:00、17:00–19:30）用高峰间隔，其余用平峰间隔 */
-    fun headwayAt(minOfDay: Int, weekday: Boolean, peak: Int, offPeak: Int): Int =
-        if (weekday && (minOfDay in 420 until 540 || minOfDay in 1020 until 1170)) peak else offPeak
+    /** 按当天的分时段表取间隔（秒）；时段之外取最近一段 */
+    fun headwayAt(minOfDay: Int, weekday: Boolean, bands: List<HeadwayBand>): Int {
+        if (bands.isEmpty()) return 360
+        bands.firstOrNull { minOfDay >= it.from && minOfDay < it.to }?.let { return it.headwaySec }
+        return if (minOfDay < bands.first().from) bands.first().headwaySec else bands.last().headwaySec
+    }
+
+    /** 当前时段是不是当天发车最密的一段（用于区分学习到的班次偏差） */
+    fun isPeakAt(minOfDay: Int, weekday: Boolean, bands: List<HeadwayBand>): Boolean =
+        weekday && bands.isNotEmpty() && headwayAt(minOfDay, weekday, bands) == bands.minOf { it.headwaySec }
 
     /**
      * 从首班开始按间隔往后排，算出接下来几班离现在多少秒。
@@ -326,22 +333,22 @@ object Decision {
     /** 地铁停站时间：进站后这么多秒内仍算「本趟」 */
     const val DWELL_SEC = 40
 
-    fun metroSchedule(nowSec: Int, firstMin: Int, lastMin: Int, weekday: Boolean, peak: Int, offPeak: Int, n: Int = 2, graceSec: Int = 0): List<Int> {
-        if (firstMin < 0 || peak <= 0 || offPeak <= 0) return emptyList()
+    fun metroSchedule(nowSec: Int, firstMin: Int, lastMin: Int, weekday: Boolean, bands: List<HeadwayBand>, n: Int = 2, graceSec: Int = 0): List<Int> {
+        if (firstMin < 0 || bands.isEmpty()) return emptyList()
         val last = if (lastMin in 0 until firstMin) lastMin + 1440 else lastMin.takeIf { it >= 0 } ?: 1439
         var t = firstMin * 60
         val out = ArrayList<Int>()
         while (t <= last * 60 && out.size < n) {
             if (t >= nowSec - graceSec) out += t - nowSec
-            t += headwayAt((t / 60) % 1440, weekday, peak, offPeak) * 60
+            t += headwayAt((t / 60) % 1440, weekday, bands)
         }
         return out
     }
 
     /** 实际时间 - 最近一班推算时间，折到 ±半个间隔；首班前/末班后返回 null */
-    fun metroResidual(nowSec: Int, firstMin: Int, lastMin: Int, weekday: Boolean, peak: Int, offPeak: Int): Int? {
-        val hw = headwayAt((nowSec / 60) % 1440, weekday, peak, offPeak) * 60
-        val around = metroSchedule(nowSec - hw, firstMin, lastMin, weekday, peak, offPeak, 3).map { nowSec - hw + it }
+    fun metroResidual(nowSec: Int, firstMin: Int, lastMin: Int, weekday: Boolean, bands: List<HeadwayBand>): Int? {
+        val hw = headwayAt((nowSec / 60) % 1440, weekday, bands)
+        val around = metroSchedule(nowSec - hw, firstMin, lastMin, weekday, bands, 3).map { nowSec - hw + it }
         val nearest = around.minByOrNull { kotlin.math.abs(it - nowSec) } ?: return null
         return (nowSec - nearest).takeIf { kotlin.math.abs(it) <= hw / 2 }
     }

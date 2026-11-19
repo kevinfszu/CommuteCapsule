@@ -19,6 +19,7 @@ object ImportedJsonSource : StaticSource {
     val hasData: Boolean get() = doc != null
     val lineCount: Int get() = doc?.lineCount ?: 0
     val stationCount: Int get() = doc?.stationCount ?: 0
+    val meta: JsonTransit.Meta? get() = doc?.let { JsonTransit.Meta(it.source, it.updated, it.note) }
 
     override val id = "imported"
     override val title: String

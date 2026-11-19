@@ -99,9 +99,9 @@ class DecisionTest {
 
     @Test fun metroScheduleFromFirstTrain() {
         // 首班 06:30：平峰 10 分钟排到 07:00，之后高峰 5 分钟 → 07:00 07:05
-        assertEquals(listOf(300, 600), Decision.metroSchedule(6 * 3600 + 55 * 60, 390, 1410, true, 5, 10))
-        assertEquals(listOf(600), Decision.metroSchedule(6 * 3600 + 20 * 60, 390, 1410, true, 5, 10, n = 1))
-        assertTrue(Decision.metroSchedule(23 * 3600 + 40 * 60, 390, 1410, true, 5, 10).isEmpty())
+        assertEquals(listOf(300, 600), Decision.metroSchedule(6 * 3600 + 55 * 60, 390, 1410, true, bands(5, 10)))
+        assertEquals(listOf(600), Decision.metroSchedule(6 * 3600 + 20 * 60, 390, 1410, true, bands(5, 10), n = 1))
+        assertTrue(Decision.metroSchedule(23 * 3600 + 40 * 60, 390, 1410, true, bands(5, 10)).isEmpty())
     }
 
     @Test fun mixedLegNeverSaysNoBusWhenMetroKnown() {
@@ -116,8 +116,8 @@ class DecisionTest {
 
     @Test fun metroResidualWrapsToNearestTrain() {
         // 平峰 10 分钟，首班 06:00：10:02 上车 → 比 10:00 那班晚 120 秒；10:08 → 比 10:10 早 120 秒
-        assertEquals(120, Decision.metroResidual(10 * 3600 + 2 * 60, 360, 1410, false, 5, 10))
-        assertEquals(-120, Decision.metroResidual(10 * 3600 + 8 * 60, 360, 1410, false, 5, 10))
+        assertEquals(120, Decision.metroResidual(10 * 3600 + 2 * 60, 360, 1410, false, bands(5, 10)))
+        assertEquals(-120, Decision.metroResidual(10 * 3600 + 8 * 60, 360, 1410, false, bands(5, 10)))
     }
 
     @Test fun planPicksLatestTrainForEarliestBus() {
@@ -140,9 +140,32 @@ class DecisionTest {
 
     @Test fun metroScheduleKeepsDwellingTrain() {
         // 首班 6:00，平峰 10 分钟；现在 6:10:20 → 6:10 那班还在站内（-20 秒）
-        val l = Decision.metroSchedule(6 * 3600 + 620, 360, 1380, false, 10, 10, 3, Decision.DWELL_SEC)
+        val l = Decision.metroSchedule(6 * 3600 + 620, 360, 1380, false, bands(10, 10), 3, Decision.DWELL_SEC)
         assertEquals(listOf(-20, 580, 1180), l)
     }
+
+    @Test fun multiBandHeadway() {
+        val wd = listOf(
+            HeadwayBand(360, 540, 360), HeadwayBand(540, 1020, 420),
+            HeadwayBand(1020, 1200, 540), HeadwayBand(1200, 1350, 660),
+        )
+        assertEquals(360, Decision.headwayAt(7 * 60, true, wd))
+        assertEquals(420, Decision.headwayAt(12 * 60, true, wd))
+        assertEquals(540, Decision.headwayAt(18 * 60, true, wd))
+        assertEquals(660, Decision.headwayAt(21 * 60, true, wd))
+        // 第一段之前 / 最后一段之后用最近一段
+        assertEquals(360, Decision.headwayAt(5 * 60, true, wd))
+        assertEquals(660, Decision.headwayAt(23 * 60, true, wd))
+        // 跨 09:00：08:58 之后是 09:00（120 秒），再下一班步长变 420 秒
+        assertEquals(listOf(120, 540, 960), Decision.metroSchedule(8 * 3600 + 58 * 60, 360, 810, true, wd, 3))
+    }
+
+    /** 测试用两档时段：高峰 7:00–9:30、17:00–19:30，其余平峰 */
+    private fun bands(peakMin: Int, offMin: Int) = listOf(
+        HeadwayBand(0, 420, offMin * 60), HeadwayBand(420, 570, peakMin * 60),
+        HeadwayBand(570, 1020, offMin * 60), HeadwayBand(1020, 1170, peakMin * 60),
+        HeadwayBand(1170, 1440, offMin * 60),
+    )
 
     @Test fun connectMissPicksCatchableNotGoneBus() {
         // 还要 17 分钟到换乘站：0 秒那班根本赶不上，应该提 17 分 20 秒那班（不留余量刚好来得及）

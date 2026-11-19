@@ -52,10 +52,12 @@ data class LineRealtime(val buses: List<BusEta>, val tip: String) {
     companion object { val EMPTY = LineRealtime(emptyList(), "") }
 }
 
-/** 地铁站某线某方向的首末班 */
+/** 地铁站某线某方向的首末班与分时段发车间隔 */
 data class SubwayDir(
     val line: String, val shortName: String, val dest: String, val firstMin: Int, val lastMin: Int,
     val dirId: String = "", val order: Int = -1,   // 该方向的编号、本站是这个方向的第几站
+    val weekdayBands: List<HeadwayBand> = emptyList(),
+    val weekendBands: List<HeadwayBand> = emptyList(),
 )
 
 data class MetroStation(val name: String, val lat: Double, val lng: Double)
@@ -113,6 +115,7 @@ object NoSource : StaticSource {
 object Transit {
     private const val PREFS = "transit"
     private const val KEY_REGION = "region"
+    private const val KEY_DATA_URL = "data_url"
 
     /** 可选扩展入口（src/extra 里的 object Extras { val sources: List<Any> }），没有就跳过 */
     private const val EXTRAS = "com.busnotice.commute.extra.Extras"
@@ -156,6 +159,19 @@ object Transit {
         region = r.trim()
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_REGION, region).apply()
     }
+
+    /** 上次用的数据地址；没保存过时用构建期注入的默认值 */
+    fun dataUrl(): String =
+        appContextOrNull()?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            ?.getString(KEY_DATA_URL, null)
+            ?.takeIf { it.isNotBlank() }
+            ?: BuildConfig.TRANSIT_DATA_URL
+
+    fun setDataUrl(ctx: Context, url: String) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_DATA_URL, url.trim()).apply()
+    }
+
+    private fun appContextOrNull(): Context? = if (::appContext.isInitialized) appContext else null
 
     /** 导入 JSON 并立即切换为当前静态数据源；失败时抛异常，旧数据保持不变。 */
     fun importJson(ctx: Context, text: String): ImportSummary = synchronized(this) {

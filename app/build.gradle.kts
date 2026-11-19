@@ -24,6 +24,8 @@ android {
         versionName = ver
         // 检查更新用的仓库（owner/name）：CI 里自动取当前仓库，本地构建为空 = 不检查
         buildConfigField("String", "UPDATE_REPO", "\"" + (System.getenv("GITHUB_REPOSITORY") ?: "") + "\"")
+        // 默认线路数据地址：不注入则为空，首次需在「数据源」里手填
+        buildConfigField("String", "TRANSIT_DATA_URL", "\"" + (System.getenv("TRANSIT_DATA_URL") ?: "") + "\"")
     }
 
     // 签名：CI 里有 SIGNING_KEYSTORE_B64 等密钥时用固定签名（每次构建可覆盖安装），否则用 Android 默认调试签名

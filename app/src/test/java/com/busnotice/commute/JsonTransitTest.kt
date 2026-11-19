@@ -158,4 +158,45 @@ class JsonTransitTest {
         assertEquals("1路", JsonTransit.search(doc, "1路", "test").lines.single().name)
         assertEquals("甲", JsonTransit.search(doc, "甲", "test").stations.single().name)
     }
+
+    @Test
+    fun `service bands parse and weekend can be omitted`() {
+        val json = """{ "lines": [ { "id": "x", "name": "13号线", "subway": true,
+            "first": "06:00", "last": "22:30", "hopSec": 120,
+            "service": { "weekday": [
+                { "from": "06:00", "to": "09:00", "headwaySec": 360 },
+                { "from": "09:00", "to": "17:00", "headwaySec": 420 }
+            ] },
+            "stops": [ { "name": "A", "lat": 1.0, "lng": 1.0 }, { "name": "B", "lat": 1.1, "lng": 1.1 } ] } ] }"""
+        val line = JsonTransit.parse(json).lines.single()
+        assertEquals(listOf(360, 420), line.weekdayBands.map { it.headwaySec })
+        assertTrue(line.weekendBands.isEmpty())
+
+        val c = Candidate(
+            Candidate.Type.METRO, "13号线", "A", 1.0, 1.0,
+            weekdayBands = line.weekdayBands, weekendBands = line.weekendBands,
+        )
+        assertEquals(360, c.headwaySec(7 * 60, weekend = false))
+        assertEquals(360, c.headwaySec(7 * 60, weekend = true))
+    }
+
+    @Test
+    fun `invalid bands are skipped`() {
+        val json = """{ "lines": [ { "id": "x", "name": "X", "subway": true,
+            "service": { "weekday": [
+                { "from": "09:00", "to": "06:00", "headwaySec": 360 },
+                { "from": "06:00", "to": "09:00", "headwaySec": 5 },
+                { "from": "06:00", "to": "09:00", "headwaySec": 360 }
+            ] },
+            "stops": [ { "name": "A", "lat": 1.0, "lng": 1.0 }, { "name": "B", "lat": 1.1, "lng": 1.1 } ] } ] }"""
+        assertEquals(listOf(360), JsonTransit.parse(json).lines.single().weekdayBands.map { it.headwaySec })
+    }
+
+    @Test
+    fun `station first and last are offset by station order`() {
+        val doc = JsonTransit.parse(sample)
+        val east = JsonTransit.subwayDirs(doc, 23.020, 113.000, "C", "test").first { it.dest == "D" }
+        assertEquals(360 + 2 * 2, east.firstMin)
+        assertEquals(1380 + 2 * 2, east.lastMin)
+    }
 }

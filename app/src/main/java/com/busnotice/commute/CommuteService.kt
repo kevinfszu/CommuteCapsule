@@ -393,10 +393,11 @@ class CommuteService : Service() {
         val at = java.time.Instant.ofEpochMilli(atMillis + 60_000).atZone(ZoneId.systemDefault())
         val sec = at.toLocalTime().toSecondOfDay()
         val weekday = at.dayOfWeek.value <= 5
-        val peak = Decision.headwayAt(sec / 60, weekday, 1, 2) == 1
+        val bands = c.bandsFor(!weekday)
+        val peak = Decision.isPeakAt(sec / 60, weekday, bands)
         val off = if (c.metroDir.isNotEmpty()) Learn.metroOffsetSec(this, Learn.metroKey(c, peak)) else 0
         val eta = dirs.mapNotNull { d ->
-            Decision.metroSchedule(sec - off, d.firstMin, d.lastMin, weekday, c.peakHw(), c.offPeakHw(), 1).firstOrNull()
+            Decision.metroSchedule(sec - off, d.firstMin, d.lastMin, weekday, bands, 1).firstOrNull()
         }.minOrNull() ?: return null
         return atMillis + 60_000 + eta * 1000L
     }
@@ -468,8 +469,9 @@ class CommuteService : Service() {
         val c = leg.candidates.firstOrNull { it.isMetro() && it.metroDir.isNotEmpty() } ?: return
         val d = metroDirs["${c.stopName}|${c.name}"]?.firstOrNull { it.dest == c.metroDir } ?: return
         val weekday = LocalDate.now().dayOfWeek.value <= 5
-        val r = Decision.metroResidual(nowSec - 30, d.firstMin, d.lastMin, weekday, c.peakHw(), c.offPeakHw()) ?: return
-        val peak = Decision.headwayAt(nowSec / 60, weekday, 1, 2) == 1
+        val bands = c.bandsFor(!weekday)
+        val r = Decision.metroResidual(nowSec - 30, d.firstMin, d.lastMin, weekday, bands) ?: return
+        val peak = Decision.isPeakAt(nowSec / 60, weekday, bands)
         Learn.recordMetro(this, Learn.metroKey(c, peak), r)
     }
 
@@ -829,10 +831,11 @@ class CommuteService : Service() {
                                     ?.filter { Transit.sameLine(c.name, it) } ?: return@async Decision.Option(c, walk, emptyList())
                             }.filter { c.metroDir.isEmpty() || it.dest == c.metroDir }
                             val weekday = LocalDate.now().dayOfWeek.value <= 5
-                            val peakNow = Decision.headwayAt(secOfDay / 60, weekday, 1, 2) == 1
+                            val bands = c.bandsFor(!weekday)
+                            val peakNow = Decision.isPeakAt(secOfDay / 60, weekday, bands)
                             val off = if (c.metroDir.isNotEmpty()) Learn.metroOffsetSec(this@CommuteService, Learn.metroKey(c, peakNow)) else 0
                             val arr = dirs.flatMap { d ->
-                                Decision.metroSchedule(secOfDay - off, d.firstMin, d.lastMin, weekday, c.peakHw(), c.offPeakHw(), 3, Decision.DWELL_SEC)
+                                Decision.metroSchedule(secOfDay - off, d.firstMin, d.lastMin, weekday, bands, 3, Decision.DWELL_SEC)
                                     .map { Decision.Arrival(it, -1, if (dirs.size > 1) "往${d.dest}" else "", estimated = true) }
                             }
                             Decision.Option(c, walk, arr,
@@ -1031,9 +1034,10 @@ class CommuteService : Service() {
         if (dirs.size != 1) return null // 方向不确定就不推，免得算错
         val d = dirs.first()
         val weekday = LocalDate.now().dayOfWeek.value <= 5
-        val peakNow = Decision.headwayAt(secOfDay / 60, weekday, 1, 2) == 1
+        val bands = c.bandsFor(!weekday)
+        val peakNow = Decision.isPeakAt(secOfDay / 60, weekday, bands)
         val off = Learn.metroOffsetSec(this, Learn.metroKey(c, peakNow))
-        val trains = Decision.metroSchedule(secOfDay - off, d.firstMin, d.lastMin, weekday, c.peakHw(), c.offPeakHw(), 30)
+        val trains = Decision.metroSchedule(secOfDay - off, d.firstMin, d.lastMin, weekday, bands, 30)
         val busArr = withContext(Dispatchers.IO) {
             buses.map { b ->
                 async {

@@ -28,7 +28,11 @@ object JsonTransit {
         val lastMin: Int,
         val hopSec: Int,
         val stops: List<Stop>,
+        val weekdayBands: List<HeadwayBand> = emptyList(),
+        val weekendBands: List<HeadwayBand> = emptyList(),
     )
+
+    data class Meta(val source: String, val updated: String, val note: String)
 
     data class Doc(
         val region: String,
@@ -93,6 +97,7 @@ object JsonTransit {
             val firstMin = parseClock(o.optString("first", ""), DEFAULT_FIRST)
             val lastMin = parseClock(o.optString("last", ""), DEFAULT_LAST)
             val hopSec = o.optInt("hopSec", if (subway) 140 else 90).coerceIn(20, 900)
+            val (weekdayBands, weekendBands) = parseService(o.optJSONObject("service"))
 
             var dirLabel = o.optString("dirLabel", "").trim()
             if (dirLabel.isEmpty()) {
@@ -111,6 +116,8 @@ object JsonTransit {
                 lastMin = lastMin,
                 hopSec = hopSec,
                 stops = stops,
+                weekdayBands = weekdayBands,
+                weekendBands = weekendBands,
             )
         }
 
@@ -215,14 +222,17 @@ object JsonTransit {
             // 终点就是本站的方向没有继续乘坐的意义（环线没有真正的终点，保留双向）
             if (!line.loop && line.stops.last().name == name) return@mapNotNull null
             val stop = line.stops[index]
+            val offsetMin = index * line.hopSec / 60
             SubwayDir(
                 line = line.name,
                 shortName = line.name,
                 dest = if (line.loop) line.dirLabel else line.stops.last().name,
-                firstMin = stop.firstMin ?: line.firstMin,
-                lastMin = stop.lastMin ?: line.lastMin,
+                firstMin = stop.firstMin ?: (line.firstMin + offsetMin),
+                lastMin = stop.lastMin ?: (line.lastMin + offsetMin),
                 dirId = line.id,
                 order = index + 1,
+                weekdayBands = line.weekdayBands,
+                weekendBands = line.weekendBands,
             )
         }.distinctBy { it.line to it.dest }
     }
@@ -348,6 +358,22 @@ object JsonTransit {
 
     private fun norm(s: String) = s.replace("地铁", "").replace(" ", "").trim()
 
+    /** service.weekday / service.weekend 的 band 数组，最多 8 段；非法段跳过 */
+    private fun parseService(o: JSONObject?): Pair<List<HeadwayBand>, List<HeadwayBand>> {
+        if (o == null) return emptyList<HeadwayBand>() to emptyList()
+        fun bands(name: String): List<HeadwayBand> {
+            val arr = o.optJSONArray(name) ?: return emptyList()
+            return (0 until minOf(arr.length(), 8)).mapNotNull { i ->
+                val b = arr.optJSONObject(i) ?: return@mapNotNull null
+                val from = parseClockOrNull(b.optString("from")) ?: return@mapNotNull null
+                val to = parseClockOrNull(b.optString("to")) ?: return@mapNotNull null
+                val sec = b.optInt("headwaySec", 0)
+                if (to <= from || sec !in 30..1800) null else HeadwayBand(from, to, sec)
+            }.sortedBy { it.from }
+        }
+        return bands("weekday") to bands("weekend")
+    }
+
     private fun parseClock(raw: String, fallback: Int): Int =
         parseClockOrNull(raw) ?: fallback
 
@@ -355,7 +381,7 @@ object JsonTransit {
         val match = CLOCK.matchEntire(raw.trim()) ?: return null
         val hour = match.groupValues[1].toInt()
         val minute = match.groupValues[2].toInt()
-        if (hour !in 0..23 || minute !in 0..59) return null
+        if (hour !in 0..27 || minute !in 0..59) return null
         return hour * 60 + minute
     }
 }

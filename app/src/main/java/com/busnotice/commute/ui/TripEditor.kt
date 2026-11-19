@@ -11,10 +11,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -59,6 +62,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.busnotice.commute.Candidate
+import com.busnotice.commute.HeadwayBand
 import com.busnotice.commute.Leg
 import com.busnotice.commute.Scheduler
 import com.busnotice.commute.Trip
@@ -321,7 +325,7 @@ private fun LegCard(
                                         when (c.type) {
                                             Candidate.Type.SHUTTLE -> " · " + c.departures.sorted().joinToString(" ") { hhmm(it) }
                                             Candidate.Type.METRO -> (if (c.metroDir.isNotEmpty()) " · 往${c.metroDir}" else "") +
-                                                " · 高峰 ${c.peakHw()} / 平峰 ${c.offPeakHw()} 分钟一班"
+                                                " · " + c.scheduleText()
                                             else -> ""
                                         },
                                     fontSize = 12.sp, lineHeight = 16.sp, color = dim,
@@ -373,20 +377,36 @@ private fun LegCard(
     }
 }
 
-/** 点已添加的公交/地铁弹出来改：地铁改方向和高峰/平峰间隔，两者都能改下车站 */
+/** 点已添加的公交/地铁弹出来改：地铁可改方向和逐段间隔（分 + 秒），两者都能改下车站 */
 @Composable
 fun CandidateDialog(c: Candidate, onDismiss: () -> Unit, onSave: (Candidate) -> Unit) {
     val ctx = LocalContext.current
     var alight by remember { mutableStateOf(c.alightName) }
-    var peak by remember { mutableStateOf(c.peakHw()) }
-    var off by remember { mutableStateOf(c.offPeakHw()) }
     var dir by remember { mutableStateOf(c.metroDir) }
     var dirs by remember { mutableStateOf<List<SubwayDir>>(emptyList()) }
+    var wd by remember(c) { mutableStateOf(c.weekdayBands) }
+    var we by remember(c) { mutableStateOf(c.weekendBands.ifEmpty { c.weekdayBands }) }
+    var peakSec by remember(c) { mutableStateOf(c.peakHwSec()) }
+    var offSec by remember(c) { mutableStateOf(c.offPeakHwSec()) }
+    var lastDir by remember(c) { mutableStateOf(c.metroDir) }
     if (c.isMetro()) LaunchedEffect(c) {
         dirs = withContext(Dispatchers.IO) {
             runCatching { Transit.subwayDirs(c.lat, c.lng, c.stopName, c.regionId) }.getOrNull()
         }.orEmpty().filter { Transit.sameLine(c.name, it) }
     }
+    LaunchedEffect(dir, dirs) {
+        if (dir != lastDir) {
+            lastDir = dir
+            val d = dirs.firstOrNull { it.dest == dir }
+            if (d != null && d.weekdayBands.isNotEmpty()) {
+                wd = d.weekdayBands
+                we = d.weekendBands.ifEmpty { d.weekdayBands }
+                peakSec = d.weekdayBands.minOf { it.headwaySec }
+                offSec = d.weekdayBands.maxOf { it.headwaySec }
+            }
+        }
+    }
+    val hasBands = wd.isNotEmpty() || we.isNotEmpty()
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
     AlertDialog(
@@ -404,8 +424,34 @@ fun CandidateDialog(c: Candidate, onDismiss: () -> Unit, onSave: (Candidate) -> 
                             }
                         }
                     }
-                    Stepper("高峰几分钟一班", peak, 1, 30) { peak = it }
-                    Stepper("平峰几分钟一班", off, 1, 30) { off = it }
+                    if (hasBands) {
+                        SectionLabel("发车间隔")
+                        Column(
+                            Modifier.fillMaxWidth().heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                        ) {
+                            if (wd.isNotEmpty()) {
+                                Text("工作日", fontSize = 12.sp, color = Fuse.dim(dark))
+                                wd.forEachIndexed { i, b ->
+                                    BandRow(b) { sec ->
+                                        wd = wd.toMutableList().also { it[i] = b.copy(headwaySec = sec) }
+                                    }
+                                }
+                            }
+                            if (we.isNotEmpty()) {
+                                Text("周末", fontSize = 12.sp, color = Fuse.dim(dark), modifier = Modifier.padding(top = 6.dp))
+                                we.forEachIndexed { i, b ->
+                                    BandRow(b) { sec ->
+                                        we = we.toMutableList().also { it[i] = b.copy(headwaySec = sec) }
+                                    }
+                                }
+                            }
+                        }
+                        Text("时段来自线路数据，只能改每段间隔（分 + 秒）。", fontSize = 12.sp,
+                            lineHeight = 17.sp, color = Fuse.dim(dark))
+                    } else {
+                        HeadwayStepper("高峰间隔", peakSec) { peakSec = it }
+                        HeadwayStepper("平峰间隔", offSec) { offSec = it }
+                    }
                 }
                 GlassField(alight, { alight = it }, label = "下车站", singleLine = true,
                     modifier = Modifier.fillMaxWidth())
@@ -415,20 +461,42 @@ fun CandidateDialog(c: Candidate, onDismiss: () -> Unit, onSave: (Candidate) -> 
         },
         confirmButton = {
             DialogButton("保存", primary = true, onClick = {
-                val changedSchedule = c.isMetro() && (peak != c.peakHw() || off != c.offPeakHw() || dir != c.metroDir)
+                val nwd: List<HeadwayBand>
+                val nwe: List<HeadwayBand>
+                if (c.isMetro() && hasBands) {
+                    nwd = wd
+                    nwe = we.ifEmpty { wd }
+                } else {
+                    nwd = c.copy(
+                        headwayMin = (peakSec + 59) / 60, offPeakHeadwayMin = (offSec + 59) / 60,
+                        weekdayBands = emptyList(), weekendBands = emptyList(),
+                    ).bandsFor(false)
+                    nwe = nwd
+                }
+                val changedSchedule = c.isMetro() &&
+                    (nwd != c.bandsFor(false) || nwe != c.bandsFor(true) || dir != c.metroDir)
                 if (changedSchedule) Learn.resetMetro(ctx, c)
+                val peakMin = ((nwd.minOfOrNull { it.headwaySec } ?: 360) + 59) / 60
+                val offMin = ((nwd.maxOfOrNull { it.headwaySec } ?: 540) + 59) / 60
                 onSave(c.copy(
                     alightName = alight.trim(),
                     alightLat = if (alight.trim() == c.alightName) c.alightLat else Double.NaN,
                     alightLng = if (alight.trim() == c.alightName) c.alightLng else Double.NaN,
-                    headwayMin = if (c.isMetro()) peak else c.headwayMin,
-                    offPeakHeadwayMin = if (c.isMetro()) off else c.offPeakHeadwayMin,
+                    headwayMin = if (c.isMetro()) peakMin else c.headwayMin,
+                    offPeakHeadwayMin = if (c.isMetro()) offMin else c.offPeakHeadwayMin,
                     metroDir = dir,
+                    weekdayBands = if (c.isMetro()) nwd else c.weekdayBands,
+                    weekendBands = if (c.isMetro()) nwe else c.weekendBands,
                 ))
             })
         },
         dismissButton = { DialogButton("取消", onClick = onDismiss) },
     )
+}
+
+@Composable
+private fun BandRow(b: HeadwayBand, onChange: (Int) -> Unit) {
+    HeadwayStepper("${hhmm(b.from)}–${hhmm(b.to)}", b.headwaySec, onChange)
 }
 
 /** 公交蓝色大巴、地铁绿色 M、通勤车橙色：列表里一眼分开 */
@@ -443,7 +511,7 @@ fun TransitIcon(c: Candidate) {
 }
 
 @Composable
-fun Stepper(label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
+fun Stepper(label: String, value: Int, min: Int, max: Int, unit: String = "分钟", onChange: (Int) -> Unit) {
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
@@ -451,10 +519,43 @@ fun Stepper(label: String, value: Int, min: Int, max: Int, onChange: (Int) -> Un
         RoundButton(onClick = { onChange((value - 1).coerceAtLeast(min)) }, dark = dark, size = 34.dp) {
             Text("−", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ink)
         }
-        Text("$value 分钟", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle,
+        Text("$value $unit", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle,
             modifier = Modifier.padding(horizontal = 10.dp))
         RoundButton(onClick = { onChange((value + 1).coerceAtMost(max)) }, dark = dark, size = 34.dp) {
             Text("+", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = ink)
+        }
+    }
+}
+
+/** 秒级发车间隔：上行改分、下行改秒，总秒数限制 30–1800 */
+@Composable
+fun HeadwayStepper(label: String, sec: Int, onChange: (Int) -> Unit) {
+    val dark = isSystemInDarkTheme()
+    val ink = Fuse.ink(dark)
+    val dim = Fuse.dim(dark)
+    fun apply(total: Int) = onChange(total.coerceIn(30, 1800))
+    Column(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(label, fontSize = 14.sp, color = ink, modifier = Modifier.weight(1f))
+            RoundButton(onClick = { apply(sec - 60) }, dark = dark, size = 30.dp) {
+                Text("−", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ink)
+            }
+            Text("${sec / 60} 分", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle,
+                modifier = Modifier.padding(horizontal = 8.dp))
+            RoundButton(onClick = { apply(sec + 60) }, dark = dark, size = 30.dp) {
+                Text("+", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ink)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Spacer(Modifier.weight(1f))
+            RoundButton(onClick = { apply(sec - 1) }, dark = dark, size = 30.dp) {
+                Text("−", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = dim)
+            }
+            Text("%02d 秒".format(sec % 60), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink,
+                style = TnumStyle, modifier = Modifier.padding(horizontal = 8.dp))
+            RoundButton(onClick = { apply(sec + 1) }, dark = dark, size = 30.dp) {
+                Text("+", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = dim)
+            }
         }
     }
 }

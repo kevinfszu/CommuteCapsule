@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.busnotice.commute.ImportedJsonSource
+import com.busnotice.commute.RemoteTransit
 import com.busnotice.commute.Transit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -36,8 +37,10 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
     var region by remember { mutableStateOf(Transit.region) }
     var version by remember { mutableStateOf(0) }
     var importing by remember { mutableStateOf(false) }
+    var dataUrl by remember { mutableStateOf(Transit.dataUrl()) }
     val sourceTitle = remember(version) { Transit.static.title }
     val hasImport = remember(version) { ImportedJsonSource.hasData }
+    val meta = remember(version) { ImportedJsonSource.meta }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -85,6 +88,46 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                     enabled = !importing,
                     secondary = true,
                 ) { Text(if (importing) "导入中…" else "导入 JSON 文件") }
+                GlassField(
+                    dataUrl, { dataUrl = it }, label = "数据地址",
+                    supportingText = { Text("返回 JSON 的 http/https 地址，拉取成功后记住") },
+                    singleLine = true,
+                )
+                PillButton(
+                    onClick = {
+                        importing = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    val text = RemoteTransit.fetch(dataUrl)
+                                    Transit.importJson(ctx, text).also { Transit.setDataUrl(ctx, dataUrl) }
+                                }
+                            }
+                            importing = false
+                            result.onSuccess {
+                                version++
+                                region = Transit.region
+                                Toast.makeText(
+                                    ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站", Toast.LENGTH_LONG,
+                                ).show()
+                            }.onFailure {
+                                Toast.makeText(ctx, "拉取失败：${it.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !importing && dataUrl.isNotBlank(),
+                    secondary = true,
+                ) { Text(if (importing) "拉取中…" else "从链接拉取") }
+                if (meta != null) {
+                    if (meta.source.isNotBlank()) Text(
+                        "数据：${meta.source}" + (if (meta.updated.isNotBlank()) "（${meta.updated}）" else ""),
+                        fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                    )
+                    if (meta.note.isNotBlank()) Text(
+                        meta.note, fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                    )
+                }
                 if (hasImport) {
                     PillButton(
                         onClick = {

@@ -5,6 +5,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+/** 一段发车间隔：from/to 为一天中的分钟，to 允许 1440（24:00） */
+data class HeadwayBand(val from: Int, val to: Int, val headwaySec: Int)
+
 /** 一个可以上车的选项：实时公交、自定义通勤车（时刻表）、地铁（按间隔估算） */
 data class Candidate(
     val type: Type,
@@ -28,12 +31,63 @@ data class Candidate(
     // 下车站坐标（WGS-84，用于到站提醒；NaN 表示运行时再查）
     val alightLat: Double = Double.NaN,
     val alightLng: Double = Double.NaN,
+    // 地铁：工作日 / 周末分时段发车间隔；周末为空 = 复制工作日
+    val weekdayBands: List<HeadwayBand> = emptyList(),
+    val weekendBands: List<HeadwayBand> = emptyList(),
 ) {
     enum class Type { BUS, SHUTTLE, METRO }
 
     fun isMetro() = type == Type.METRO
-    fun peakHw() = headwayMin.takeIf { it > 0 } ?: 6
-    fun offPeakHw() = offPeakHeadwayMin.takeIf { it > 0 } ?: ((peakHw() * 3 + 1) / 2)
+    fun peakHw() = (peakHwSec() + 59) / 60
+    fun offPeakHw() = (offPeakHwSec() + 59) / 60
+
+    /** 当天（工作日 / 周末）的时段表：周末为空复制工作日；都为空按旧分钟字段合成 */
+    fun bandsFor(weekend: Boolean): List<HeadwayBand> = when {
+        weekend && weekendBands.isNotEmpty() -> weekendBands
+        !weekend && weekdayBands.isNotEmpty() -> weekdayBands
+        weekdayBands.isNotEmpty() -> weekdayBands
+        else -> synthesizedBands()
+    }
+
+    /** 某时刻的发车间隔（秒） */
+    fun headwaySec(minOfDay: Int, weekend: Boolean = false): Int {
+        val bands = bandsFor(weekend)
+        if (bands.isEmpty()) return 360
+        bands.firstOrNull { minOfDay >= it.from && minOfDay < it.to }?.let { return it.headwaySec }
+        return if (minOfDay < bands.first().from) bands.first().headwaySec else bands.last().headwaySec
+    }
+
+    fun peakHwSec(weekend: Boolean = false): Int =
+        bandsFor(weekend).minOfOrNull { it.headwaySec } ?: 360
+
+    fun offPeakHwSec(weekend: Boolean = false): Int =
+        bandsFor(weekend).maxOfOrNull { it.headwaySec } ?: 540
+
+    /** 列表摘要：「工作日 6–11 分钟 · 周末 6–8 分钟」；没有分时段数据时「约 6 分钟一班」 */
+    fun scheduleText(): String {
+        if (weekdayBands.isEmpty() && weekendBands.isEmpty()) return "约 ${peakHw()} 分钟一班"
+        fun part(weekend: Boolean): String {
+            val hws = bandsFor(weekend).map { it.headwaySec }
+            val lo = hws.minOrNull() ?: 360
+            val hi = hws.maxOrNull() ?: lo
+            return if (lo == hi) "每 ${minText(lo)} 分钟" else "${minText(lo)}–${minText(hi)} 分钟"
+        }
+        return "工作日 ${part(false)} · 周末 ${part(true)}"
+    }
+
+    private fun minText(sec: Int) =
+        if (sec % 60 == 0) "${sec / 60}" else "%.1f".format(sec / 60.0)
+
+    private fun synthesizedBands(): List<HeadwayBand> {
+        val metro = isMetro()
+        val peak = headwayMin.takeIf { it > 0 }?.times(60) ?: if (metro) 360 else 600
+        val off = offPeakHeadwayMin.takeIf { it > 0 }?.times(60) ?: if (metro) peak * 3 / 2 else 900
+        return listOf(
+            HeadwayBand(0, 420, off), HeadwayBand(420, 570, peak),
+            HeadwayBand(570, 1020, off), HeadwayBand(1020, 1170, peak),
+            HeadwayBand(1170, 1440, off),
+        )
+    }
 
     fun label() = when (type) {
         Type.BUS -> if (looksLikeMetro(name) || name.endsWith("线")) name else "${name}路"
@@ -47,6 +101,7 @@ data class Candidate(
         .put("stationId", stationId).put("lastStop", lastStop).put("stopIndex", stopIndex)
         .put("alightName", alightName).put("departures", JSONArray(departures)).put("headwayMin", headwayMin)
         .put("offPeakHeadwayMin", offPeakHeadwayMin).put("metroDir", metroDir)
+        .put("weekdayBands", bandsText(weekdayBands)).put("weekendBands", bandsText(weekendBands))
         .apply { if (!alightLat.isNaN() && !alightLng.isNaN()) put("alightLat", alightLat).put("alightLng", alightLng) }
 
     companion object {
@@ -75,8 +130,27 @@ data class Candidate(
                 headwayMin = o.optInt("headwayMin"),
                 offPeakHeadwayMin = o.optInt("offPeakHeadwayMin"), metroDir = o.optString("metroDir"),
                 alightLat = o.optDouble("alightLat"), alightLng = o.optDouble("alightLng"),
+                weekdayBands = parseBands(o.optString("weekdayBands")),
+                weekendBands = parseBands(o.optString("weekendBands")),
             )
         }
+
+        /** "360-540:360,540-1020:420"；空列表写 "" */
+        internal fun bandsText(bands: List<HeadwayBand>): String =
+            bands.joinToString(",") { "${it.from}-${it.to}:${it.headwaySec}" }
+
+        private fun parseBands(raw: String): List<HeadwayBand> =
+            raw.split(',').mapNotNull { item ->
+                val parts = item.trim().split(':')
+                if (parts.size != 2) return@mapNotNull null
+                val range = parts[0].split('-')
+                if (range.size != 2) return@mapNotNull null
+                val from = range[0].toIntOrNull() ?: return@mapNotNull null
+                val to = range[1].toIntOrNull() ?: return@mapNotNull null
+                val sec = parts[1].toIntOrNull() ?: return@mapNotNull null
+                if (from < 0 || to <= from || to > 1665 || sec !in 30..1800) return@mapNotNull null
+                HeadwayBand(from, to, sec)
+            }.sortedBy { it.from }
     }
 }
 

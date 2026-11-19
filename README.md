@@ -48,7 +48,7 @@ https://github.com/user-attachments/assets/ed941a36-0ca4-4f84-857b-b4fdbf0b71c9
 
 ## 接入你自己的数据
 
-最快的方式是运行时导入，不用编译：把线路写成 JSON，在 App 菜单「数据源」→「导入 JSON 文件」里选中即可。格式和字段见 [docs/DATA_SOURCE.md](docs/DATA_SOURCE.md)。
+最快的方式是运行时导入，不用编译：把线路写成 JSON，在 App 菜单「数据源」→「导入 JSON 文件」里选中即可；也可以填一个 `http/https` 地址点「从链接拉取」。线路数据支持工作日/周末分时段发车间隔（精确到秒）和双向始发站首末班。格式和字段见 [docs/DATA_SOURCE.md](docs/DATA_SOURCE.md)。
 
 也可以编进 App：
 
