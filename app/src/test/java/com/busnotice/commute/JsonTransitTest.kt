@@ -135,6 +135,13 @@ class JsonTransitTest {
     }
 
     @Test
+    fun `lineDetail carries hopSec for ride estimate`() {
+        val doc = JsonTransit.parse(sample)
+        assertEquals(120, JsonTransit.lineDetail(doc, "l13e", "test").hopSec)
+        assertEquals(140, JsonTransit.lineDetail(doc, "l11i", "test").hopSec)
+    }
+
+    @Test
     fun `metroStops takes the shortest direction`() {
         val doc = JsonTransit.parse(sample)
         val dirs = JsonTransit.subwayDirs(doc, 23.110, 113.100, "Q", "test")

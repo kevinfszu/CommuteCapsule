@@ -42,6 +42,7 @@ data class SearchResult(val lines: List<SearchLine>, val stations: List<SearchSt
 data class LineDetail(
     val lineId: String, val name: String, val firstStop: String, val lastStop: String,
     val stations: List<StopPoint>, val reverseLineId: String,
+    val hopSec: Int = 0,   // 平均每站用时；0 = 数据源没提供，界面用回退值
 )
 
 data class BusEta(

@@ -77,7 +77,7 @@ object MockSource : StaticSource, RealtimeSource {
 
     override fun lineDetail(lineId: String, region: String): LineDetail {
         val l = line(lineId)
-        return LineDetail(l.id, l.name, l.names.first(), l.names.last(), lineStops(l), reverseOf(l.id))
+        return LineDetail(l.id, l.name, l.names.first(), l.names.last(), lineStops(l), reverseOf(l.id), HOP_S)
     }
 
     private fun stopsAt(name: String, subway: Boolean?, distanceM: Int): NearStop? {

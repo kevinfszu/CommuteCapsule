@@ -134,6 +134,10 @@ private fun distText(m: Int) = if (m >= 1000) "%.1f 公里".format(m / 1000.0) e
 
 private fun secText(sec: Int) = "%d 分 %02d 秒".format(sec / 60, sec % 60)
 
+/** 按站数估算乘车分钟数：数据源每站用时优先，没有就用回退值；向上取整，限制 1–120 分钟 */
+internal fun estRideMin(hops: Int, hopSec: Int, fallbackSec: Int): Int =
+    if (hops <= 0) 0 else ((hops * (hopSec.takeIf { it > 0 } ?: fallbackSec) + 59) / 60).coerceIn(1, 120)
+
 /** 筛选关键词：忽略空白与大小写，末尾的「路 / 号线 / 站」不影响匹配 */
 private fun filterKey(text: String) =
     text.replace(Regex("\\s+"), "").lowercase().removeSuffix("号线").removeSuffix("路").removeSuffix("站")
@@ -184,12 +188,13 @@ private sealed interface BusStage {
     data object Lines : BusStage
     data class Station(val title: String, val siteId: String, val sameNameId: String, val fallback: List<NearStop>) : BusStage
     data class Line(val name: String, val dirs: List<LineDir>, val dirIndex: Int, val query: String) : BusStage
-    data class Alight(val detail: LineDetail, val board: StopPoint, val query: String) : BusStage
+    data class Alight(val detail: LineDetail, val board: StopPoint, val back: BusStage, val query: String) : BusStage
+    data class Confirm(val detail: LineDetail, val board: StopPoint, val alight: StopPoint, val rideMin: Int, val back: BusStage) : BusStage
 }
 
 /** 选公交：先选线路 → 选上车站 → 选下车站（可跳过）；附近站点作为快捷入口 */
 @Composable
-fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
+fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     var stage by remember { mutableStateOf<BusStage>(BusStage.Lines) }
@@ -216,7 +221,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
     }
 
     /** 选定了上车站：拉线路详情拿坐标，进入「选下车站」 */
-    fun board(lineId: String, order: Int, stopId: String) {
+    fun board(lineId: String, order: Int, stopId: String, back: BusStage) {
         if (busy) return
         busy = true
         scope.launch {
@@ -224,19 +229,19 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
             busy = false
             val st = d?.stations?.firstOrNull { it.order == order } ?: d?.stations?.firstOrNull { it.stopId == stopId }
             if (d == null || st == null) Toast.makeText(ctx, "线路详情加载失败", Toast.LENGTH_SHORT).show()
-            else stage = BusStage.Alight(d, st, "")
+            else stage = BusStage.Alight(d, st, back, "")
         }
     }
 
-    fun finish(d: LineDetail, b: StopPoint, alight: String): Unit {
-        val a = d.stations.firstOrNull { it.name == alight && it.order > b.order }
+    fun finish(d: LineDetail, b: StopPoint, a: StopPoint?, rideMin: Int) {
         onPicked(Candidate.normalize(
             Candidate(
                 type = Candidate.Type.BUS, name = d.name, stopName = b.name, lat = b.lat, lng = b.lng,
-                lineId = d.lineId, stationId = b.stopId, lastStop = d.lastStop, stopIndex = b.order, alightName = alight,
+                lineId = d.lineId, stationId = b.stopId, lastStop = d.lastStop, stopIndex = b.order,
+                alightName = a?.name.orEmpty(),
                 alightLat = a?.lat ?: Double.NaN, alightLng = a?.lng ?: Double.NaN,
             )
-        ))
+        ), rideMin)
     }
 
     when (val s = stage) {
@@ -318,7 +323,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                                         headline = lineText(l.name), bold = true,
                                         supporting = "开往 ${l.lastStop}",
                                         leading = { NameBadge(l.name) },
-                                        onClick = { board(l.lineId, l.stopIndex, p.stopId) },
+                                        onClick = { board(l.lineId, l.stopIndex, p.stopId, s) },
                                     )
                                 }
                             }
@@ -371,7 +376,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                     GlassRow(
                         headline = st.name,
                         leading = { OrderDot(st.order) },
-                        onClick = { stage = BusStage.Alight(d, st, "") },
+                        onClick = { stage = BusStage.Alight(d, st, s, "") },
                     )
                 }
             }
@@ -388,13 +393,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                 onQuery = { stage = s.copy(query = it) },
                 options = alights,
                 emptyHint = if (s.query.isBlank()) "这已经是终点站，可以直接跳过" else "没有匹配的站点",
-                onBack = {
-                    stage = BusStage.Line(
-                        s.detail.name,
-                        listOf(LineDir(s.detail.lineId, s.detail.firstStop, s.detail.lastStop)),
-                        0, "",
-                    )
-                },
+                onBack = { stage = s.back },
                 leading = {
                     val dark = isSystemInDarkTheme()
                     GlassCard {
@@ -405,18 +404,49 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                                 fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark))
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text("选了下车站就能一键生成回程，也可以跳过", fontSize = 12.sp, color = Fuse.dim(dark))
+                        Text("选了下车站就能估算乘车时间，也能一键生成回程；也可以跳过", fontSize = 12.sp, color = Fuse.dim(dark))
                         Spacer(Modifier.height(10.dp))
-                        PillButton(secondary = true, onClick = { finish(s.detail, s.board, "") }) { Text("跳过") }
+                        PillButton(secondary = true, onClick = { finish(s.detail, s.board, null, 0) }) { Text("跳过") }
                     }
                 },
             ) { st ->
+                val hops = st.order - s.board.order
                 GlassRow(
                     headline = st.name,
-                    supporting = "${st.order - s.board.order} 站",
-                    leading = { OrderDot(st.order - s.board.order) },
-                    onClick = { finish(s.detail, s.board, st.name) },
+                    supporting = "$hops 站 · 约 ${estRideMin(hops, s.detail.hopSec, 120)} 分钟",
+                    leading = { OrderDot(hops) },
+                    onClick = {
+                        stage = BusStage.Confirm(
+                            s.detail, s.board, st, estRideMin(hops, s.detail.hopSec, 120), s.back,
+                        )
+                    },
                 )
+            }
+        }
+
+        is BusStage.Confirm -> {
+            val hops = s.alight.order - s.board.order
+            val est = estRideMin(hops, s.detail.hopSec, 120)
+            PickerScaffold("确认乘车", { stage = BusStage.Alight(s.detail, s.board, s.back, "") }) {
+                item {
+                    val dark = isSystemInDarkTheme()
+                    GlassCard {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                NameBadge(s.detail.name)
+                                Spacer(Modifier.width(10.dp))
+                                Text("${lineText(s.detail.name)} · ${s.board.name} → ${s.alight.name}",
+                                    fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark))
+                            }
+                            Text("相隔 $hops 站 · 约 $est 分钟（已填入，可调整）", fontSize = 13.sp, color = Fuse.dim(dark))
+                            Stepper("大约坐多久", s.rideMin, 1, 120) { stage = s.copy(rideMin = it) }
+                            PillButton(
+                                onClick = { finish(s.detail, s.board, s.alight, s.rideMin) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("添加", fontWeight = FontWeight.Bold) }
+                        }
+                    }
+                }
             }
         }
     }
@@ -427,19 +457,23 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
 private sealed interface MetroStage {
     data object Lines : MetroStage
     data class Line(val line: SearchLine, val dirIndex: Int, val query: String) : MetroStage
-    data class Station(val line: SearchLine, val dir: LineDir, val stop: StopPoint) : MetroStage
+    data class Station(
+        val line: SearchLine, val dirIndex: Int, val dirDest: String,
+        val stop: StopPoint, val dirLineId: String,
+        val alight: StopPoint?, val hops: Int, val rideMin: Int,
+    ) : MetroStage
+    data class Alight(val back: Station, val dirLineId: String, val dirDest: String, val query: String) : MetroStage
 }
 
-/** 地铁没有实时数据：先选线路 → 选站 → 确认方向、首末班与间隔，再填下车站 */
+/** 地铁没有实时数据：先选线路 → 选站 → 确认方向、首末班与间隔，再选下车站并估算时长 */
 @Composable
-fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
+fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
     var stage by remember { mutableStateOf<MetroStage>(MetroStage.Lines) }
     var lineQuery by remember { mutableStateOf("") }
     var metroLines by remember { mutableStateOf<List<SearchLine>?>(null) }
     var linesFailed by remember { mutableStateOf(false) }
     var headway by remember { mutableStateOf(300) }
     var offPeak by remember { mutableStateOf(540) }
-    var alight by remember { mutableStateOf("") }
 
     LaunchedEffect(Unit) {
         val all = withContext(Dispatchers.IO) { runCatching { Transit.lines() }.getOrNull() }
@@ -517,30 +551,31 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                     GlassRow(
                         headline = st.name,
                         leading = { OrderDot(st.order) },
-                        onClick = { stage = MetroStage.Station(s.line, s.line.dirs[s.dirIndex], st) },
+                        onClick = {
+                            stage = MetroStage.Station(
+                                s.line, s.dirIndex, "", st, s.line.dirs[s.dirIndex].lineId, null, 0, 0,
+                            )
+                        },
                     )
                 }
             }
         }
 
         is MetroStage.Station -> {
-            var dirs by remember(s) { mutableStateOf<List<SubwayDir>?>(null) }
-            var dirDest by remember(s) { mutableStateOf("") }
-            LaunchedEffect(s) {
+            var dirs by remember(s.line, s.stop) { mutableStateOf<List<SubwayDir>?>(null) }
+            LaunchedEffect(s.line, s.stop) {
                 dirs = withContext(Dispatchers.IO) {
                     runCatching { Transit.subwayDirs(s.stop.lat, s.stop.lng, s.stop.name) }.getOrNull()
                 }.orEmpty()
             }
+            val lineDir = s.line.dirs.getOrNull(s.dirIndex)
             val lineDirs = dirs.orEmpty().filter { Transit.sameLine(s.line.name, it) }
-            val sel = lineDirs.firstOrNull { it.dest == dirDest }
-                ?: lineDirs.firstOrNull { it.dest == s.dir.lastStop || it.dest == s.dir.label }
+            val sel = lineDirs.firstOrNull { it.dest == s.dirDest }
+                ?: lineDirs.firstOrNull { it.dest == lineDir?.lastStop || it.dest == lineDir?.label }
                 ?: lineDirs.firstOrNull()
             val bands = sel?.weekdayBands.orEmpty()
             val weekendBands = sel?.weekendBands.orEmpty().ifEmpty { bands }
-            val back = {
-                val i = s.line.dirs.indexOfFirst { it.lineId == s.dir.lineId }.coerceAtLeast(0)
-                stage = MetroStage.Line(s.line, i, "")
-            }
+            val back = { stage = MetroStage.Line(s.line, s.dirIndex, "") }
             PickerScaffold("${s.stop.name} 上车", back) {
                 item {
                     GlassCard {
@@ -556,8 +591,12 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                                 SectionLabel("方向")
                                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                     lineDirs.forEach { item ->
-                                        GlassChip(selected = sel?.dest == item.dest, onClick = { dirDest = item.dest },
-                                            label = if (s.dir.label.isEmpty()) "开往 ${item.dest}" else item.dest)
+                                        GlassChip(selected = sel?.dest == item.dest, onClick = {
+                                            stage = s.copy(
+                                                dirDest = item.dest, dirLineId = item.dirId.ifEmpty { s.dirLineId },
+                                                alight = null, hops = 0, rideMin = 0,
+                                            )
+                                        }, label = if (lineDir?.label.isNullOrEmpty()) "开往 ${item.dest}" else item.dest)
                                     }
                                 }
                                 Text("本站首末班：" + lineDirs.joinToString("，") {
@@ -588,8 +627,24 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                                 HeadwayStepper("高峰间隔", headway) { headway = it }
                                 HeadwayStepper("平峰间隔", offPeak) { offPeak = it }
                             }
-                            GlassField(alight, { alight = it }, label = "下车站（可选，用于到站提醒和回程）", singleLine = true,
-                                modifier = Modifier.fillMaxWidth())
+                            SectionLabel("下车站")
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(s.alight?.name ?: "还没选", fontSize = 15.sp, color = Fuse.ink(dark))
+                                    Text(
+                                        if (s.alight != null) "相隔 ${s.hops} 站，时长已按站数估算，可调整"
+                                        else "可选，用于到站提醒、回程和乘车时长估算",
+                                        fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                                    )
+                                }
+                                PillButton(secondary = true, onClick = {
+                                    val dirId = sel?.dirId?.ifEmpty { null } ?: s.dirLineId
+                                    stage = MetroStage.Alight(s, dirId, sel?.dest ?: lineDir?.lastStop.orEmpty(), "")
+                                }) { Text(if (s.alight == null) "去选" else "重选") }
+                            }
+                            if (s.alight != null) {
+                                Stepper("大约坐多久", s.rideMin, 1, 120) { stage = s.copy(rideMin = it) }
+                            }
                             PillButton(onClick = {
                                     val peakSec = bands.minOfOrNull { it.headwaySec } ?: headway
                                     val offSec = bands.maxOfOrNull { it.headwaySec } ?: offPeak
@@ -602,14 +657,79 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate) -> Unit) {
                                         type = Candidate.Type.METRO, name = s.line.name,
                                         stopName = s.stop.name, lat = s.stop.lat, lng = s.stop.lng,
                                         headwayMin = (peakSec + 59) / 60, offPeakHeadwayMin = (offSec + 59) / 60,
-                                        metroDir = sel?.dest ?: s.dir.label.ifEmpty { s.dir.lastStop },
-                                        alightName = alight.trim(),
+                                        metroDir = sel?.dest ?: lineDir?.let { it.label.ifEmpty { it.lastStop } }.orEmpty(),
+                                        alightName = s.alight?.name.orEmpty(),
+                                        alightLat = s.alight?.lat ?: Double.NaN,
+                                        alightLng = s.alight?.lng ?: Double.NaN,
                                         weekdayBands = if (bands.isEmpty()) manual else bands,
                                         weekendBands = if (bands.isEmpty()) manual else weekendBands,
-                                    ))
+                                    ), if (s.alight != null) s.rideMin else 0)
                                 }, modifier = Modifier.fillMaxWidth()) { Text("添加", fontWeight = FontWeight.Bold) }
                         }
                     }
+                }
+            }
+        }
+
+        is MetroStage.Alight -> {
+            var detail by remember(s.dirLineId) { mutableStateOf<LineDetail?>(null) }
+            var failed by remember(s.dirLineId) { mutableStateOf(false) }
+            LaunchedEffect(s.dirLineId) {
+                detail = withContext(Dispatchers.IO) { runCatching { Transit.lineDetail(s.dirLineId) }.getOrNull() }
+                failed = detail == null
+            }
+            val d = detail
+            val stations = remember(d, s.query, s.back.stop) {
+                d?.stations.orEmpty().filter { it.order > s.back.stop.order && nameMatches(it.name, s.query) }
+            }
+            when {
+                failed -> PickerScaffold("${s.back.stop.name} · 选下车站", { stage = s.back }) {
+                    hint("线路详情加载失败，可以返回跳过")
+                }
+                d == null -> PickerScaffold("${s.back.stop.name} · 选下车站", { stage = s.back }) {
+                    loading()
+                }
+                else -> PickerOptions(
+                    title = "${s.back.stop.name} · 选下车站",
+                    placeholder = "筛选下车站",
+                    query = s.query,
+                    onQuery = { stage = s.copy(query = it) },
+                    options = stations,
+                    emptyHint = if (s.query.isBlank()) "这已经是终点站，可以不选" else "没有匹配的站点",
+                    onBack = { stage = s.back },
+                    leading = {
+                        val dark = isSystemInDarkTheme()
+                        GlassCard {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                NameBadge(s.back.line.name)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    "${lineText(s.back.line.name)} · ${s.back.stop.name} 上车" +
+                                        if (s.dirDest.isNotEmpty()) " · 开往 ${s.dirDest}" else "",
+                                    fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark),
+                                )
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text("选了下车站就能估算乘车时间，也能生成回程；也可以跳过",
+                                fontSize = 12.sp, color = Fuse.dim(dark))
+                            Spacer(Modifier.height(10.dp))
+                            PillButton(secondary = true, onClick = { stage = s.back }) { Text("跳过") }
+                        }
+                    },
+                ) { st ->
+                    val hops = st.order - s.back.stop.order
+                    GlassRow(
+                        headline = st.name,
+                        supporting = "$hops 站 · 约 ${estRideMin(hops, d.hopSec, 140)} 分钟",
+                        leading = { OrderDot(hops) },
+                        onClick = {
+                            stage = s.back.copy(
+                                alight = st, hops = hops,
+                                rideMin = estRideMin(hops, d.hopSec, 140),
+                                dirLineId = s.dirLineId, dirDest = s.dirDest,
+                            )
+                        },
+                    )
                 }
             }
         }

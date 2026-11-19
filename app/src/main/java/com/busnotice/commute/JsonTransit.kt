@@ -184,6 +184,7 @@ object JsonTransit {
                 StopPoint("${line.id}-${i + 1}", stop.name, i + 1, stop.lat, stop.lng)
             },
             reverseLineId = line.reverseId,
+            hopSec = line.hopSec,
         )
     }
 

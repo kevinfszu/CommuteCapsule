@@ -23,12 +23,13 @@ fun App(resumeTick: Int) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
     var draft by remember { mutableStateOf(Trip()) }
 
-    fun addCandidate(legIndex: Int, c: Candidate, replaceAt: Int = -1) {
+    fun addCandidate(legIndex: Int, c: Candidate, replaceAt: Int = -1, rideMin: Int = 0) {
         val legs = draft.legs.toMutableList()
         while (legs.size <= legIndex) legs += Leg(emptyList())
-        val cands = legs[legIndex].candidates.toMutableList()
+        val leg = legs[legIndex]
+        val cands = leg.candidates.toMutableList()
         if (replaceAt in cands.indices) cands[replaceAt] = c else cands += c
-        legs[legIndex] = legs[legIndex].copy(candidates = cands)
+        legs[legIndex] = leg.copy(candidates = cands, rideMin = if (rideMin > 0) rideMin else leg.rideMin)
         draft = draft.copy(legs = legs)
         screen = Screen.Edit
     }
@@ -54,16 +55,16 @@ fun App(resumeTick: Int) {
         )
         is Screen.PickBus -> BusPicker(
             onBack = { screen = Screen.Edit },
-            onPicked = { addCandidate(s.legIndex, it) },
+            onPicked = { c, ride -> addCandidate(s.legIndex, c, rideMin = ride) },
         )
         is Screen.PickMetro -> MetroPicker(
             onBack = { screen = Screen.Edit },
-            onPicked = { addCandidate(s.legIndex, it) },
+            onPicked = { c, ride -> addCandidate(s.legIndex, c, rideMin = ride) },
         )
         is Screen.EditShuttle -> ShuttleEditor(
             initial = draft.legs.getOrNull(s.legIndex)?.candidates?.getOrNull(s.candidateIndex),
             onBack = { screen = Screen.Edit },
-            onDone = { addCandidate(s.legIndex, it, s.candidateIndex) },
+            onDone = { addCandidate(s.legIndex, it, replaceAt = s.candidateIndex) },
         )
     }
 }
