@@ -102,15 +102,16 @@ object NodeLog {
         return out
     }
 
-    /** UI 用：节点条顺序。 */
+    /** UI 用：节点条顺序。连续两段地铁是站内换乘，中间不进出站。 */
     fun timeline(trip: Trip): List<NodeRef> {
         val out = ArrayList<NodeRef>()
         out += NodeRef(Kind.DEPART, 0)
         trip.legs.forEachIndexed { i, leg ->
-            if (leg.isMetroOnly()) out += NodeRef(Kind.ENTER, i)
+            val metro = leg.isMetroOnly()
+            if (metro && trip.legs.getOrNull(i - 1)?.isMetroOnly() != true) out += NodeRef(Kind.ENTER, i)
             out += NodeRef(Kind.BOARD, i)
             out += NodeRef(Kind.ALIGHT, i)
-            if (leg.isMetroOnly()) out += NodeRef(Kind.EXIT, i)
+            if (metro && trip.legs.getOrNull(i + 1)?.isMetroOnly() != true) out += NodeRef(Kind.EXIT, i)
         }
         out += NodeRef(Kind.ARRIVE, 0)
         return out

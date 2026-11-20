@@ -142,7 +142,7 @@ internal fun estRideMin(hops: Int, hopSec: Int, fallbackSec: Int): Int =
 private fun filterKey(text: String) =
     text.replace(Regex("\\s+"), "").lowercase().removeSuffix("号线").removeSuffix("路").removeSuffix("站")
 
-private fun nameMatches(name: String, q: String): Boolean {
+internal fun nameMatches(name: String, q: String): Boolean {
     val k = filterKey(q)
     return k.isEmpty() || filterKey(name).contains(k)
 }

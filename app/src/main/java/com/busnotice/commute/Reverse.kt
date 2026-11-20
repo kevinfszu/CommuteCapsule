@@ -29,7 +29,27 @@ object Reverse {
                 val st = Transit.search(c.alightName).stations
                     .firstOrNull { it.isSubway && it.name == c.alightName }
                     ?: Transit.search(c.alightName).stations.first { it.isSubway }
-                c.copy(stopName = st.name, lat = st.lat, lng = st.lng, alightName = c.stopName)
+                // 反方向：优先找「开往原上车站」的方向；环线（内环/外环）没有同名终点，就取另一个方向
+                val dirs = runCatching { Transit.subwayDirs(st.lat, st.lng, st.name, c.regionId) }
+                    .getOrNull().orEmpty().filter { Transit.sameLine(c.name, it) }
+                val rev = if (c.metroDir.isEmpty()) null
+                else dirs.firstOrNull { it.dest == c.stopName }
+                    ?: dirs.firstOrNull { it.dest != c.metroDir }
+                val wdBands = rev?.weekdayBands?.takeIf { it.isNotEmpty() }
+                val weBands = rev?.weekendBands?.takeIf { it.isNotEmpty() }
+                // 拿不到方向数据时，环线按内环⇄外环直接翻转
+                val revDest = rev?.dest ?: when {
+                    c.metroDir.contains("内环") -> c.metroDir.replace("内环", "外环")
+                    c.metroDir.contains("外环") -> c.metroDir.replace("外环", "内环")
+                    else -> c.metroDir
+                }
+                c.copy(
+                    stopName = st.name, lat = st.lat, lng = st.lng,
+                    alightName = c.stopName, alightLat = c.lat, alightLng = c.lng,
+                    metroDir = revDest,
+                    weekdayBands = wdBands ?: c.weekdayBands,
+                    weekendBands = weBands ?: c.weekendBands,
+                )
             }.getOrElse { warnings += "未找到地铁站「${c.alightName}」"; null }
         }
         Candidate.Type.BUS -> {

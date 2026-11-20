@@ -22,12 +22,15 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,10 +75,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.busnotice.commute.Candidate
 import com.busnotice.commute.HeadwayBand
 import com.busnotice.commute.Leg
 import com.busnotice.commute.Scheduler
+import com.busnotice.commute.StopPoint
 import com.busnotice.commute.Trip
 import com.busnotice.commute.TripStore
 
@@ -449,6 +455,9 @@ private fun LegCard(
 fun CandidateDialog(c: Candidate, onDismiss: () -> Unit, onSave: (Candidate) -> Unit) {
     val ctx = LocalContext.current
     var alight by remember { mutableStateOf(c.alightName) }
+    var alightLat by remember(c) { mutableStateOf(c.alightLat) }
+    var alightLng by remember(c) { mutableStateOf(c.alightLng) }
+    var picking by remember { mutableStateOf(false) }
     var dir by remember { mutableStateOf(c.metroDir) }
     var dirs by remember { mutableStateOf<List<SubwayDir>>(emptyList()) }
     var wd by remember(c) { mutableStateOf(c.weekdayBands) }
@@ -520,8 +529,24 @@ fun CandidateDialog(c: Candidate, onDismiss: () -> Unit, onSave: (Candidate) -> 
                         HeadwayStepper("平峰间隔", offSec) { offSec = it }
                     }
                 }
-                GlassField(alight, { alight = it }, label = "下车站", singleLine = true,
-                    modifier = Modifier.fillMaxWidth())
+                // 地铁、公交的下车站从线路站序里选；通勤车没有线路数据，仍手填
+                if (c.isMetro() || c.type == Candidate.Type.BUS) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.weight(1f)) {
+                            Text("下车站", fontSize = 12.sp, color = Fuse.dim(dark))
+                            Text(
+                                alight.ifEmpty { "未选择" }, fontSize = 15.sp,
+                                color = if (alight.isEmpty()) Fuse.dim(dark) else ink,
+                            )
+                        }
+                        PillButton(secondary = true, onClick = { picking = true }) {
+                            Text(if (alight.isEmpty()) "选择" else "重选")
+                        }
+                    }
+                } else {
+                    GlassField(alight, { alight = it }, label = "下车站", singleLine = true,
+                        modifier = Modifier.fillMaxWidth())
+                }
                 if (c.isMetro()) Text("地铁段手动确认「已上车」后，将以真实上车时间修正推算，使用次数越多越准确。",
                     fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
             }
@@ -547,8 +572,8 @@ fun CandidateDialog(c: Candidate, onDismiss: () -> Unit, onSave: (Candidate) -> 
                 val offMin = ((nwd.maxOfOrNull { it.headwaySec } ?: 540) + 59) / 60
                 onSave(c.copy(
                     alightName = alight.trim(),
-                    alightLat = if (alight.trim() == c.alightName) c.alightLat else Double.NaN,
-                    alightLng = if (alight.trim() == c.alightName) c.alightLng else Double.NaN,
+                    alightLat = if (alight.trim().isEmpty()) Double.NaN else alightLat,
+                    alightLng = if (alight.trim().isEmpty()) Double.NaN else alightLng,
                     headwayMin = if (c.isMetro()) peakMin else c.headwayMin,
                     offPeakHeadwayMin = if (c.isMetro()) offMin else c.offPeakHeadwayMin,
                     metroDir = dir,
@@ -559,6 +584,76 @@ fun CandidateDialog(c: Candidate, onDismiss: () -> Unit, onSave: (Candidate) -> 
         },
         dismissButton = { DialogButton("取消", onClick = onDismiss) },
     )
+    if (picking) AlightPickerSheet(
+        c = c, dir = dir, dirs = dirs,
+        onPick = { name, la, ln -> alight = name; alightLat = la; alightLng = ln },
+        onDismiss = { picking = false },
+    )
+}
+
+/** 下车站候选：地铁按当前方向、公交按上车站之后的站序；可搜索 */
+@Composable
+private fun AlightPickerSheet(
+    c: Candidate,
+    dir: String,
+    dirs: List<SubwayDir>,
+    onPick: (String, Double, Double) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val dark = isSystemInDarkTheme()
+    val ink = Fuse.ink(dark)
+    var query by remember { mutableStateOf("") }
+    var stops by remember(c, dir) { mutableStateOf<List<StopPoint>?>(null) }
+    LaunchedEffect(c, dir) {
+        stops = withContext(Dispatchers.IO) {
+            runCatching {
+                if (c.isMetro()) {
+                    val d = dirs.firstOrNull { it.dest == dir } ?: dirs.firstOrNull()
+                        ?: return@runCatching emptyList<StopPoint>()
+                    if (d.dirId.isEmpty()) emptyList<StopPoint>()
+                    else Transit.lineDetail(d.dirId, c.regionId).stations.filter { it.order > d.order }
+                } else {
+                    Transit.lineDetail(c.lineId, c.regionId).stations.filter { it.order > c.stopIndex }
+                }
+            }.getOrNull()
+        }
+    }
+    val shown = remember(stops, query) { stops.orEmpty().filter { nameMatches(it.name, query) } }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 72.dp)
+                .clip(RoundedCornerShape(24.dp)).background(Fuse.surface(dark)).padding(16.dp),
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                Text("${c.label()} · 选择下车站", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ink)
+                Spacer(Modifier.height(10.dp))
+                GlassField(query, { query = it }, placeholder = "筛选站点", modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(10.dp))
+                val list = stops
+                when {
+                    list == null -> Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Fuse.accent(dark))
+                    }
+                    shown.isEmpty() -> Text(
+                        if (query.isBlank()) "没有可选的下车站，可留空" else "无匹配站点",
+                        fontSize = 14.sp, color = Fuse.dim(dark), modifier = Modifier.padding(vertical = 20.dp),
+                    )
+                    else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                        items(shown, key = { it.stopId.ifEmpty { it.name } }) { st ->
+                            GlassRow(
+                                headline = st.name,
+                                supporting = "${st.order} 站",
+                                onClick = { onPick(st.name, st.lat, st.lng); onDismiss() },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
