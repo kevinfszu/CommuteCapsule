@@ -54,7 +54,17 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: gradle --no-daemon assembleDebug testDebugUnitTest
+        run: |
+          set -o pipefail
+          gradle --no-daemon assembleDebug testDebugUnitTest 2>&1 | tee gradle.log
+
+      # 编译/测试失败时把关键几行显示为注解，方便直接看到原因
+      - name: Build errors
+        if: failure()
+        run: |
+          grep -E '^(e: |FAILED|> Task .* FAILED)' gradle.log | head -60 | while IFS= read -r l; do
+            echo "::error title=gradle::$l"
+          done
 
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk "CommuteCapsule-$VERSION_NAME.apk"
