@@ -335,7 +335,7 @@ class CommuteService : Service() {
         if (t.leaveMode()) return now + (rideTotal + 30) * 60_000L
         val end = LocalDate.now().atStartOfDay().plusMinutes(t.endMinute.toLong() + 5)
         // 多段行程：给后面几段留出乘车时间
-        val extra = t.legs.indices.dropLast(1).sumOf { Learn.ride(this, t, it, metroSecOf(t, it)).minutes + 5 }
+        val extra = (0 until (t.legs.size - 1)).sumOf { Learn.ride(this, t, it, metroSecOf(t, it)).minutes + 5 }
         return end.plusMinutes(extra.toLong()).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
 
