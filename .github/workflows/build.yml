@@ -62,8 +62,11 @@ jobs:
       - name: Build errors
         if: failure()
         run: |
-          grep -E '^(e: |FAILED|> Task .* FAILED)' gradle.log | head -60 | while IFS= read -r l; do
+          grep -E '^(e: |.* FAILED$)' gradle.log | head -40 | while IFS= read -r l; do
             echo "::error title=gradle::$l"
+          done
+          grep -h -A3 '<failure' app/build/test-results/testDebugUnitTest/*.xml 2>/dev/null | head -60 | while IFS= read -r l; do
+            echo "::error title=test::$l"
           done
 
       - name: Rename APK
