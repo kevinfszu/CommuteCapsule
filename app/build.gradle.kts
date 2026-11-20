@@ -28,15 +28,21 @@ android {
         buildConfigField("String", "TRANSIT_DATA_URL", "\"" + (System.getenv("TRANSIT_DATA_URL") ?: "") + "\"")
     }
 
-    // 签名：CI 里有 SIGNING_KEYSTORE_B64 等密钥时用固定签名（每次构建可覆盖安装），否则用 Android 默认调试签名
-    val ks = System.getenv("SIGNING_KEYSTORE_PATH")
-    if (!ks.isNullOrEmpty() && file(ks).exists()) {
+    // 签名：优先用 CI 注入的固定密钥（SIGNING_KEYSTORE_PATH），没有就用仓库内置的 keystore/commutecapsule.p12。
+    // 两者都没有才退回 Android 默认调试签名——那个每次构建都是新密钥，装新版本会报「与已安装应用签名不同」。
+    val envKs = System.getenv("SIGNING_KEYSTORE_PATH")
+    val repoKs = rootProject.file("keystore/commutecapsule.p12")
+    val envFile = envKs?.takeIf { it.isNotEmpty() }?.let { file(it) }?.takeIf { it.exists() }
+    val fixedKs = envFile ?: repoKs.takeIf { it.exists() }
+    if (fixedKs != null) {
+        val fromRepo = fixedKs == repoKs
         signingConfigs {
             create("fixed") {
-                storeFile = file(ks)
-                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
-                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
-                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+                storeFile = fixedKs
+                if (fromRepo) storeType = "PKCS12"   // 仓库内置的是 PKCS12；CI 注入的按 Java 默认类型读
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: "commute2026"
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS") ?: "commutecapsule"
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: "commute2026"
             }
         }
         buildTypes { debug { signingConfig = signingConfigs.getByName("fixed") } }
