@@ -22,18 +22,18 @@ object Reverse {
     }
 
     private fun reverseCandidate(c: Candidate, warnings: MutableList<String>): Candidate? = when (c.type) {
-        Candidate.Type.SHUTTLE -> { warnings += "${c.label()} 是自定义通勤车，回程请手动添加"; null }
+        Candidate.Type.SHUTTLE -> { warnings += "${c.label()} 为自定义通勤班车，回程请手动添加"; null }
         Candidate.Type.METRO -> {
-            if (c.alightName.isEmpty()) { warnings += "${c.label()} 没填下车站，回程请手动添加"; null }
+            if (c.alightName.isEmpty()) { warnings += "${c.label()} 未填写下车站，回程请手动添加"; null }
             else runCatching {
                 val st = Transit.search(c.alightName).stations
                     .firstOrNull { it.isSubway && it.name == c.alightName }
                     ?: Transit.search(c.alightName).stations.first { it.isSubway }
                 c.copy(stopName = st.name, lat = st.lat, lng = st.lng, alightName = c.stopName)
-            }.getOrElse { warnings += "没找到地铁站「${c.alightName}」"; null }
+            }.getOrElse { warnings += "未找到地铁站「${c.alightName}」"; null }
         }
         Candidate.Type.BUS -> {
-            if (c.alightName.isEmpty()) { warnings += "${c.label()} 没选下车站，回程请手动添加"; null }
+            if (c.alightName.isEmpty()) { warnings += "${c.label()} 未选择下车站，回程请手动添加"; null }
             else runCatching {
                 val fwd = Transit.lineDetail(c.lineId, c.regionId)
                 val revId = fwd.reverseLineId.ifEmpty {
@@ -47,7 +47,7 @@ object Reverse {
                     stopName = st.name, lat = st.lat, lng = st.lng, lineId = revId, stationId = st.stopId,
                     lastStop = rev.lastStop, stopIndex = st.order, alightName = c.stopName,
                 )
-            }.getOrElse { warnings += "${c.label()} 反方向没找到「${c.alightName}」站"; null }
+            }.getOrElse { warnings += "${c.label()} 反向未找到「${c.alightName}」站"; null }
         }
     }
 }

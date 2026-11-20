@@ -170,7 +170,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
         placeText = runCatching {
             if (l != null) Places.passive(ctx, l.latitude, l.longitude, l.accuracy, l.time)
             val label = l?.let { Places.text(Places.classify(ctx, it.latitude, it.longitude, it.accuracy)) }
-            label ?: if (!Places.bothConfirmed(ctx)) "学习中 家 ${Places.progressOf(ctx, Places.Kind.HOME)}/3 · 公司 ${Places.progressOf(ctx, Places.Kind.WORK)}/3" else null
+            label ?: if (!Places.bothConfirmed(ctx)) "常去地点学习中：家 ${Places.progressOf(ctx, Places.Kind.HOME)}/3 · 公司 ${Places.progressOf(ctx, Places.Kind.WORK)}/3" else null
         }.getOrNull()
     }
 
@@ -229,7 +229,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                                 val tripOn = com.busnotice.commute.CommuteService.instance != null
                                 listOf(30, 60).forEach { sp ->
                                     DropdownMenuItem(
-                                        text = { val len = if (sp >= 60) "约 1 分钟" else "约 2 分钟"; Text(if (tripOn) "演示回放（$len）· 行程中不可用" else "演示回放（$len）") },
+                                        text = { val len = if (sp >= 60) "约 1 分钟" else "约 2 分钟"; Text(if (tripOn) "演示回放（$len）· 行程进行中不可用" else "演示回放（$len）") },
                                         enabled = !tripOn,
                                         onClick = { menuOpen = false; com.busnotice.commute.DemoPlayer.start(ctx, sp) },
                                     )
@@ -242,7 +242,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                                     text = { Text("重置常去地点") },
                                     onClick = {
                                         menuOpen = false; Places.reset(ctx); placeVer++
-                                        scope.launch { snack.showSnackbar("已清空常去地点，会重新学习") }
+                                        scope.launch { snack.showSnackbar("常去地点已清空，将重新学习") }
                                     },
                                 )
                                 diag?.let { d ->
@@ -262,7 +262,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                 }
                 val demoBoard = demo
                 demoCount?.let { n ->
-                    item(key = "demo-count") { PlaceChip("演示 $n 秒后开始 · 现在可以回到桌面", dark) }
+                    item(key = "demo-count") { PlaceChip("演示将于 $n 秒后开始，可返回桌面等待", dark) }
                 }
                 if (demoBoard != null) {
                     item(key = "demo-badge") { PlaceChip(com.busnotice.commute.DemoPlayer.BADGE, dark) }
@@ -285,9 +285,9 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                 if (permUrgent) item(key = "perm") { PermRow(perms, dark) { permSheet = true } }
                 if (!demoOn && trips.isEmpty()) item {
                     Column(Modifier.fillMaxWidth().padding(vertical = 48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("还没有行程", style = MaterialTheme.typography.titleMedium, color = ink)
+                        Text("暂无行程", style = MaterialTheme.typography.titleMedium, color = ink)
                         Spacer(Modifier.height(4.dp))
-                        Text("新建一条，选好上车站和时间就行", style = MaterialTheme.typography.bodyMedium, color = dimColor)
+                        Text("新建行程并设置上车站与出发时间即可", style = MaterialTheme.typography.bodyMedium, color = dimColor)
                     }
                 }
                 if (demoOn) items(com.busnotice.commute.DemoPlayer.showTrips, key = { "demo-" + it.id }) { t ->
@@ -308,11 +308,11 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                             // 正在跑的那趟不许被重复点击清零；跑着别的趟要先确认再切换
                             val cur = CommuteService.runningTripId()
                             when {
-                                cur == t.id -> scope.launch { snack.showSnackbar("这趟已在进行中；要从头来请在「⋯」里选重新开始") }
+                                cur == t.id -> scope.launch { snack.showSnackbar("该行程正在进行中；如需重新开始，请在「⋯」菜单中选择「重新开始」") }
                                 cur != null -> confirmSwitch = t
                                 else -> {
                                     CommuteService.start(ctx, t.id, manual = true)
-                                    scope.launch { snack.showSnackbar("已手动开始，切到别的 App 看胶囊") }
+                                    scope.launch { snack.showSnackbar("已手动开始，切换到其他应用可查看胶囊") }
                                 }
                             }
                         },
@@ -327,7 +327,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                                     r.onSuccess { res ->
                                         if (res.warnings.isNotEmpty()) snack.showSnackbar(res.warnings.joinToString("；"))
                                         if (res.trip.legs.isNotEmpty()) onEdit(res.trip)
-                                    }.onFailure { snack.showSnackbar("生成回程失败：网络不通？") }
+                                    }.onFailure { snack.showSnackbar("生成回程失败，请检查网络后重试") }
                                 }
                             }
                         },
@@ -335,7 +335,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                         onApplyLearned = { sg ->
                             val nt = t.copy(startMinute = sg.start, endMinute = sg.end)
                             TripStore.upsert(ctx, nt); Scheduler.schedule(ctx, nt); version++
-                            scope.launch { snack.showSnackbar("时间窗改为 ${hhmm(sg.start)}–${hhmm(sg.end)}") }
+                            scope.launch { snack.showSnackbar("时间范围已调整为 ${hhmm(sg.start)}–${hhmm(sg.end)}") }
                         },
                     )
                 }
@@ -355,16 +355,16 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
     if (sourceOpen) SourceDialog(dark) { sourceOpen = false }
 
     confirmSwitch?.let { t ->
-        val curName = CommuteService.runningTripId()?.let { id -> trips.firstOrNull { it.id == id }?.name } ?: "另一趟行程"
+        val curName = CommuteService.runningTripId()?.let { id -> trips.firstOrNull { it.id == id }?.name } ?: "其他行程"
         AlertDialog(
             onDismissRequest = { confirmSwitch = null },
             shape = DialogShape, containerColor = Fuse.surface(dark), titleContentColor = ink, textContentColor = ink,
-            title = { Text("正在进行「$curName」") },
-            text = { Text("要结束它并切换到「${t.name}」吗？当前进度会丢失。") },
+            title = { Text("「$curName」正在进行") },
+            text = { Text("将结束该行程并切换至「${t.name}」，当前进度将丢失。") },
             confirmButton = {
                 DialogButton("切换", primary = true, onClick = {
                     CommuteService.start(ctx, t.id, manual = true, restart = true); confirmSwitch = null
-                    scope.launch { snack.showSnackbar("已切换到「${t.name}」") }
+                    scope.launch { snack.showSnackbar("已切换至「${t.name}」") }
                 })
             },
             dismissButton = { DialogButton("取消", onClick = { confirmSwitch = null }) },
@@ -376,7 +376,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
             onDismissRequest = { confirmRestart = null },
             shape = DialogShape, containerColor = Fuse.surface(dark), titleContentColor = ink, textContentColor = ink,
             title = { Text("重新开始「${t.name}」？") },
-            text = { Text("会按你现在的位置重新判断走到了第几段。") },
+            text = { Text("将根据当前位置重新判断所在阶段。") },
             confirmButton = {
                 DialogButton("重新开始", primary = true, onClick = {
                     CommuteService.start(ctx, t.id, manual = true, restart = true); confirmRestart = null
@@ -426,12 +426,12 @@ private fun PermRow(perms: List<Perm>, dark: Boolean, onOpen: () -> Unit) {
         Modifier.fillMaxWidth().glass(dark).clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("设置检查", fontSize = 14.sp, color = ink)
+        Text("权限与设置", fontSize = 14.sp, color = ink)
         Spacer(Modifier.weight(1f))
         if (missing > 0) {
             Box(Modifier.size(7.dp).clip(CircleShape).background(Fuse.Amber))
             Spacer(Modifier.width(6.dp))
-            Text("还差 $missing 项设置", fontSize = 13.sp, color = Fuse.Amber, fontWeight = FontWeight.Bold)
+            Text("尚有 $missing 项未完成", fontSize = 13.sp, color = Fuse.Amber, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(10.dp))
         }
         Text("$ok / ${perms.size} ›", fontSize = 14.sp, color = ink, style = TextStyle(fontFeatureSettings = "tnum"))
@@ -445,7 +445,7 @@ private fun PermSheet(perms: List<Perm>) {
             .padding(start = 20.dp, end = 20.dp, bottom = 24.dp).navigationBarsPadding(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("设置检查", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("权限与设置", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         perms.filter { !it.optional }.forEach { PermItem(it) }
         val opt = perms.filter { it.optional }
         if (opt.isNotEmpty()) {
@@ -471,7 +471,7 @@ private fun PermItem(p: Perm) {
                 Text("已开启", style = MaterialTheme.typography.labelLarge, color = Fuse.BusGreen)
             }
         } else {
-            PillButton(onClick = p.action) { Text("去开启") }
+            PillButton(onClick = p.action) { Text("前往开启") }
         }
     }
 }
@@ -524,18 +524,18 @@ private fun TripCard(
             Box(Modifier.weight(1f)) {
                 when {
                     running -> Text(
-                        "运行中", fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        "进行中", fontSize = 12.sp, fontWeight = FontWeight.Bold,
                         color = if (dark) Color(0xFF7FE0A6) else Color(0xFF167A40),
                         modifier = Modifier.clip(RoundedCornerShape(6.dp))
                             .background(Fuse.BusGreen.copy(alpha = if (dark) 0.25f else 0.14f))
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     )
                     nextText != null -> {}
-                    else -> Text("已暂停", fontSize = 13.sp, color = dimColor)
+                    else -> Text("已停用", fontSize = 13.sp, color = dimColor)
                 }
             }
             TextButton(onClick = onTest, contentPadding = PaddingValues(horizontal = 10.dp)) {
-                Text(if (running) "进行中" else "开始", fontSize = 13.sp, color = dimColor)
+                Text(if (running) "行程进行中" else "开始", fontSize = 13.sp, color = dimColor)
             }
             Box {
                 TextButton(onClick = { more = true }, contentPadding = PaddingValues(horizontal = 10.dp)) {
@@ -558,7 +558,7 @@ private fun RouteRow(trip: Trip, dark: Boolean, modifier: Modifier = Modifier) {
     val ink = Fuse.ink(dark)
     val legs = trip.legs.filter { it.candidates.isNotEmpty() }
     if (legs.isEmpty()) {
-        Text("还没有设置线路", fontSize = 13.sp, color = Fuse.dim(dark), modifier = modifier.padding(vertical = 4.dp))
+        Text("尚未设置线路", fontSize = 13.sp, color = Fuse.dim(dark), modifier = modifier.padding(vertical = 4.dp))
         return
     }
     @Composable
@@ -571,7 +571,7 @@ private fun RouteRow(trip: Trip, dark: Boolean, modifier: Modifier = Modifier) {
             .background(if (dark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.07f))
             .padding(horizontal = 6.dp, vertical = 2.dp),
         contentAlignment = Alignment.Center,
-    ) { Text("步", fontSize = 12.sp, color = ink) }
+    ) { Text("步行", fontSize = 12.sp, color = ink) }
 
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Walk()
@@ -598,39 +598,39 @@ private fun permChecks(ctx: Context, request: (Array<String>) -> Unit): List<Per
         .recover { ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
 
     val fine = granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
-    out += Perm("精确定位", "算你走到车站要多久", fine) {
+    out += Perm("精确定位", "用于估算步行至车站的时长", fine) {
         request(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
     }
-    out += Perm("后台定位：始终允许", "闹钟在后台叫醒时也能定位", fine && granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
+    out += Perm("后台定位（始终允许）", "用于后台唤醒时获取位置", fine && granted(ctx, Manifest.permission.ACCESS_BACKGROUND_LOCATION)) {
         // 系统要求先有前台定位才能申请后台定位
         if (!granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION))
             request(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
         else request(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
     }
-    out += Perm("身体活动（计步）", "判断你下了地铁、开始走路", granted(ctx, Manifest.permission.ACTIVITY_RECOGNITION)) {
+    out += Perm("身体活动（计步）", "用于识别下车与步行状态", granted(ctx, Manifest.permission.ACTIVITY_RECOGNITION)) {
         request(arrayOf(Manifest.permission.ACTIVITY_RECOGNITION))
     }
     val notif = granted(ctx, Manifest.permission.POST_NOTIFICATIONS)
-    out += Perm("通知", "显示流体云胶囊", notif) { request(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) }
+    out += Perm("通知", "用于显示实时胶囊", notif) { request(arrayOf(Manifest.permission.POST_NOTIFICATIONS)) }
     if (Build.VERSION.SDK_INT >= 36) {
         val promoted = notif && ctx.getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
-        out += Perm("实时通知 / 流体云", "让胶囊出现在状态栏", promoted) {
+        out += Perm("实时通知（流体云）", "用于在状态栏显示胶囊", promoted) {
             if (!granted(ctx, Manifest.permission.POST_NOTIFICATIONS)) request(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
             else open(Intent("android.settings.APP_NOTIFICATION_PROMOTION_SETTINGS").putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName))
         }
     }
-    out += Perm("精确闹钟", "准时预热", ctx.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()) {
+    out += Perm("精确闹钟", "用于准时预热定位", ctx.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()) {
         open(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, pkg))
     }
-    out += Perm("电池不限制", "也请在 设置→电池 里允许后台活动和自启动",
+    out += Perm("电池优化限制", "请在「设置 → 电池」中允许后台活动与自启动",
         ctx.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(ctx.packageName)) {
         open(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg))
     }
-    out += Perm("通知使用权", "读 NFC 交通卡刷卡和系统到站提醒，进出站时间更准；只看出行通知",
+    out += Perm("通知使用权", "读取交通卡刷卡与系统到站提醒，提升进出站判断精度；仅读取出行类通知",
         com.busnotice.commute.TransitNotif.enabled(ctx), optional = true) {
         open(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
     }
-    out += Perm("出行识别", "无障碍：行程中读系统出行胶囊、交通卡弹窗的文字，只记在本机",
+    out += Perm("出行识别", "无障碍服务：行程中读取系统出行胶囊与交通卡弹窗文字，仅保存于本机",
         com.busnotice.commute.TransitA11y.enabled(ctx), optional = true) {
         open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
@@ -649,7 +649,7 @@ private fun DepartBoard(a: com.busnotice.commute.DepartAdvisor.Advice, now: Long
             Spacer(Modifier.width(8.dp))
             Text("${a.tripName} · 出发建议", fontSize = 13.sp, color = dimColor)
             Spacer(Modifier.weight(1f))
-            Text("${D.hm(a.leaveAt)} 走", fontSize = 13.sp, color = dimColor, style = TextStyle(fontFeatureSettings = "tnum"))
+            Text("${D.hm(a.leaveAt)} 出发", fontSize = 13.sp, color = dimColor, style = TextStyle(fontFeatureSettings = "tnum"))
         }
         Spacer(Modifier.height(8.dp))
         Text(D.headline(a, now), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ink)

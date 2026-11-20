@@ -177,7 +177,7 @@ private fun <T> PickerOptions(
             hint(emptyHint)
         } else {
             glassGroup(options.take(60), key = "options") { row(it) }
-            if (options.size > 60) hint("仅显示前 60 条，继续输入关键词缩小范围")
+            if (options.size > 60) hint("仅显示前 60 条，请输入关键词缩小范围")
         }
     }
 }
@@ -208,12 +208,12 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
     LaunchedEffect(Unit) {
         val loc = Loc.current(ctx)
         if (loc == null) {
-            nearbyError = "拿不到位置，可以直接筛选线路"
+            nearbyError = "无法获取位置，可直接筛选线路"
         } else {
             nearby = withContext(Dispatchers.IO) {
                 runCatching { Transit.nearbyStops(loc.latitude, loc.longitude) }.getOrNull()
             }?.filter { !it.isSubway && it.lines.isNotEmpty() }
-            if (nearby == null) nearbyError = "附近站点加载失败，可以直接筛选线路"
+            if (nearby == null) nearbyError = "附近站点加载失败，可直接筛选线路"
         }
         val all = withContext(Dispatchers.IO) { runCatching { Transit.lines() }.getOrNull() }
         busLines = all?.filter { !it.isSubway }
@@ -248,13 +248,13 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
         BusStage.Lines -> {
             val all = busLines
             val shown = remember(all, lineQuery) { all.orEmpty().filter { lineMatches(it, lineQuery) } }
-            PickerScaffold("添加公交", onBack) {
+            PickerScaffold("添加公交线路", onBack) {
                 item { SearchField(lineQuery, "筛选线路号或终点站", { lineQuery = it }) }
                 if (busy) loading()
                 if (lineQuery.isBlank()) {
                     header("附近站点")
                     when {
-                        nearby != null && nearby!!.isEmpty() -> hint("附近没有公交站，可以从下面的线路进入")
+                        nearby != null && nearby!!.isEmpty() -> hint("附近无公交站点，可从下方线路列表选择")
                         nearby != null -> glassGroup(nearby!!.groupBy { it.name }.values.toList(), key = "nearby") { group ->
                             val st = group.first()
                             GlassRow(
@@ -270,10 +270,10 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                     }
                 }
                 when {
-                    all == null -> if (linesFailed) hint("线路列表加载失败，换个数据源试试") else loading()
+                    all == null -> if (linesFailed) hint("线路列表加载失败，请更换数据源后重试") else loading()
                     shown.isEmpty() -> hint(
-                        if (lineQuery.isBlank()) "当前数据里没有公交线路，可从附近站点进入或更换数据源"
-                        else "没有匹配的线路"
+                        if (lineQuery.isBlank()) "当前数据不含公交线路，可从附近站点进入或更换数据源"
+                        else "无匹配线路"
                     )
                     else -> {
                         header(if (lineQuery.isBlank()) "全部公交线路" else "匹配的线路")
@@ -287,7 +287,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 onClick = { stage = BusStage.Line(l.name, l.dirs, 0, "") },
                             )
                         }
-                        if (shown.size > 60) hint("仅显示前 60 条，继续输入关键词缩小范围")
+                        if (shown.size > 60) hint("仅显示前 60 条，请输入关键词缩小范围")
                     }
                 }
             }
@@ -310,14 +310,14 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                 val ps = platforms
                 when {
                     ps == null -> loading()
-                    failed -> hint("这个站没查到线路")
+                    failed -> hint("该站暂无线路数据")
                     else -> {
                         var shown = 0
                         ps.forEachIndexed { i, p ->
                             val hits = p.lines.filter { nameMatches(it.name, query) }
                             if (hits.isNotEmpty()) {
                                 shown++
-                                header(if (ps.size > 1) "站台 ${i + 1}" else "经过的线路")
+                                header(if (ps.size > 1) "站台 ${i + 1}" else "途经线路")
                                 glassGroup(hits, key = "platform$i") { l ->
                                     GlassRow(
                                         headline = lineText(l.name), bold = true,
@@ -328,7 +328,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 }
                             }
                         }
-                        if (shown == 0) hint("没有匹配的线路")
+                        if (shown == 0) hint("无匹配线路")
                     }
                 }
             }
@@ -347,19 +347,19 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                 d?.stations.orEmpty().filter { nameMatches(it.name, s.query) }
             }
             when {
-                failed -> PickerScaffold("${lineText(s.name)} · 选上车站", { stage = BusStage.Lines }) {
+                failed -> PickerScaffold("${lineText(s.name)} · 选择上车站", { stage = BusStage.Lines }) {
                     hint("线路详情加载失败")
                 }
-                d == null -> PickerScaffold("${lineText(s.name)} · 选上车站", { stage = BusStage.Lines }) {
+                d == null -> PickerScaffold("${lineText(s.name)} · 选择上车站", { stage = BusStage.Lines }) {
                     loading()
                 }
                 else -> PickerOptions(
-                    title = "${lineText(s.name)} · 选上车站",
+                    title = "${lineText(s.name)} · 选择上车站",
                     placeholder = "筛选本站",
                     query = s.query,
                     onQuery = { stage = s.copy(query = it) },
                     options = stations,
-                    emptyHint = "没有匹配的站点",
+                    emptyHint = "无匹配站点",
                     onBack = { stage = BusStage.Lines },
                     leading = {
                         if (s.dirs.size > 1) {
@@ -387,12 +387,12 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                 s.detail.stations.filter { it.order > s.board.order && nameMatches(it.name, s.query) }
             }
             PickerOptions(
-                title = "在哪下车？",
+                title = "选择下车站",
                 placeholder = "筛选下车站",
                 query = s.query,
                 onQuery = { stage = s.copy(query = it) },
                 options = alights,
-                emptyHint = if (s.query.isBlank()) "这已经是终点站，可以直接跳过" else "没有匹配的站点",
+                emptyHint = if (s.query.isBlank()) "已到达终点站，可跳过" else "无匹配站点",
                 onBack = { stage = s.back },
                 leading = {
                     val dark = isSystemInDarkTheme()
@@ -404,7 +404,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark))
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text("选了下车站就能估算乘车时间，也能一键生成回程；也可以跳过", fontSize = 12.sp, color = Fuse.dim(dark))
+                        Text("选择下车站后可估算乘车时长并生成回程，也可跳过", fontSize = 12.sp, color = Fuse.dim(dark))
                         Spacer(Modifier.height(10.dp))
                         PillButton(secondary = true, onClick = { finish(s.detail, s.board, null, 0) }) { Text("跳过") }
                     }
@@ -427,7 +427,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
         is BusStage.Confirm -> {
             val hops = s.alight.order - s.board.order
             val est = estRideMin(hops, s.detail.hopSec, 120)
-            PickerScaffold("确认乘车", { stage = BusStage.Alight(s.detail, s.board, s.back, "") }) {
+            PickerScaffold("确认乘车信息", { stage = BusStage.Alight(s.detail, s.board, s.back, "") }) {
                 item {
                     val dark = isSystemInDarkTheme()
                     GlassCard {
@@ -438,8 +438,8 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 Text("${lineText(s.detail.name)} · ${s.board.name} → ${s.alight.name}",
                                     fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark))
                             }
-                            Text("相隔 $hops 站 · 约 $est 分钟（已填入，可调整）", fontSize = 13.sp, color = Fuse.dim(dark))
-                            Stepper("大约坐多久", s.rideMin, 1, 120) { stage = s.copy(rideMin = it) }
+                            Text("相隔 $hops 站 · 约 $est 分钟（已自动填入，可调整）", fontSize = 13.sp, color = Fuse.dim(dark))
+                            Stepper("预计乘车时长", s.rideMin, 1, 120) { stage = s.copy(rideMin = it) }
                             PillButton(
                                 onClick = { finish(s.detail, s.board, s.alight, s.rideMin) },
                                 modifier = Modifier.fillMaxWidth(),
@@ -485,13 +485,13 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
         MetroStage.Lines -> {
             val all = metroLines
             val shown = remember(all, lineQuery) { all.orEmpty().filter { lineMatches(it, lineQuery) } }
-            PickerScaffold("添加地铁", onBack) {
+            PickerScaffold("添加地铁线路", onBack) {
                 item { SearchField(lineQuery, "筛选地铁线路", { lineQuery = it }) }
                 when {
-                    all == null -> if (linesFailed) hint("线路列表加载失败，换个数据源试试") else loading()
+                    all == null -> if (linesFailed) hint("线路列表加载失败，请更换数据源后重试") else loading()
                     shown.isEmpty() -> hint(
-                        if (lineQuery.isBlank()) "当前数据里没有地铁线路，请先导入含地铁的数据"
-                        else "没有匹配的线路"
+                        if (lineQuery.isBlank()) "当前数据不含地铁线路，请先导入含地铁的数据"
+                        else "无匹配线路"
                     )
                     else -> {
                         header(if (lineQuery.isBlank()) "全部地铁线路" else "匹配的线路")
@@ -503,7 +503,7 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 onClick = { stage = MetroStage.Line(l, 0, "") },
                             )
                         }
-                        if (shown.size > 60) hint("仅显示前 60 条，继续输入关键词缩小范围")
+                        if (shown.size > 60) hint("仅显示前 60 条，请输入关键词缩小范围")
                     }
                 }
             }
@@ -522,19 +522,19 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                 d?.stations.orEmpty().filter { nameMatches(it.name, s.query) }
             }
             when {
-                failed -> PickerScaffold("${lineText(s.line.name)} · 选上车站", { stage = MetroStage.Lines }) {
+                failed -> PickerScaffold("${lineText(s.line.name)} · 选择上车站", { stage = MetroStage.Lines }) {
                     hint("线路详情加载失败")
                 }
-                d == null -> PickerScaffold("${lineText(s.line.name)} · 选上车站", { stage = MetroStage.Lines }) {
+                d == null -> PickerScaffold("${lineText(s.line.name)} · 选择上车站", { stage = MetroStage.Lines }) {
                     loading()
                 }
                 else -> PickerOptions(
-                    title = "${lineText(s.line.name)} · 选上车站",
+                    title = "${lineText(s.line.name)} · 选择上车站",
                     placeholder = "筛选本站",
                     query = s.query,
                     onQuery = { stage = s.copy(query = it) },
                     options = stations,
-                    emptyHint = "没有匹配的站点",
+                    emptyHint = "无匹配站点",
                     onBack = { stage = MetroStage.Lines },
                     leading = {
                         if (s.line.dirs.size > 1) {
@@ -613,16 +613,16 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                         weekendBands.forEach { Text("${hhmm(it.from)}–${hhmm(it.to)}　每 ${secText(it.headwaySec)}",
                                             fontSize = 13.sp, color = Fuse.ink(dark)) }
                                     }
-                                    Text("时段来自线路数据，添加后可在「编辑」里逐段调整间隔。",
+                                    Text("时段来自线路数据，添加后可在「编辑」中逐段调整发车间隔。",
                                         fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
                                 } else {
                                     HeadwayStepper("高峰间隔", headway) { headway = it }
                                     HeadwayStepper("平峰间隔", offPeak) { offPeak = it }
                                 }
-                                Text("数据源没有地铁实时位置，按本站首班 + 间隔推算；间隔精确到秒。",
+                                Text("数据源不含地铁实时位置，按本站首班时间与发车间隔推算，间隔精确至秒。",
                                     fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
                             } else {
-                                Text("线路数据没有 ${s.line.name} 在本站的首末班与间隔，请手工填写。",
+                                Text("线路数据缺少 ${s.line.name} 在本站的首末班与发车间隔，请手动填写。",
                                     fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
                                 HeadwayStepper("高峰间隔", headway) { headway = it }
                                 HeadwayStepper("平峰间隔", offPeak) { offPeak = it }
@@ -630,20 +630,20 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                             SectionLabel("下车站")
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(s.alight?.name ?: "还没选", fontSize = 15.sp, color = Fuse.ink(dark))
+                                    Text(s.alight?.name ?: "未选择", fontSize = 15.sp, color = Fuse.ink(dark))
                                     Text(
                                         if (s.alight != null) "相隔 ${s.hops} 站，时长已按站数估算，可调整"
-                                        else "可选，用于到站提醒、回程和乘车时长估算",
+                                        else "可选，用于到站提醒、回程生成与乘车时长估算",
                                         fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
                                     )
                                 }
                                 PillButton(secondary = true, onClick = {
                                     val dirId = sel?.dirId?.ifEmpty { null } ?: s.dirLineId
                                     stage = MetroStage.Alight(s, dirId, sel?.dest ?: lineDir?.lastStop.orEmpty(), "")
-                                }) { Text(if (s.alight == null) "去选" else "重选") }
+                                }) { Text(if (s.alight == null) "选择" else "重选") }
                             }
                             if (s.alight != null) {
-                                Stepper("大约坐多久", s.rideMin, 1, 120) { stage = s.copy(rideMin = it) }
+                                Stepper("预计乘车时长", s.rideMin, 1, 120) { stage = s.copy(rideMin = it) }
                             }
                             PillButton(onClick = {
                                     val peakSec = bands.minOfOrNull { it.headwaySec } ?: headway
@@ -683,19 +683,19 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                 d?.stations.orEmpty().filter { it.order > s.back.stop.order && nameMatches(it.name, s.query) }
             }
             when {
-                failed -> PickerScaffold("${s.back.stop.name} · 选下车站", { stage = s.back }) {
+                failed -> PickerScaffold("${s.back.stop.name} · 选择下车站", { stage = s.back }) {
                     hint("线路详情加载失败，可以返回跳过")
                 }
-                d == null -> PickerScaffold("${s.back.stop.name} · 选下车站", { stage = s.back }) {
+                d == null -> PickerScaffold("${s.back.stop.name} · 选择下车站", { stage = s.back }) {
                     loading()
                 }
                 else -> PickerOptions(
-                    title = "${s.back.stop.name} · 选下车站",
+                    title = "${s.back.stop.name} · 选择下车站",
                     placeholder = "筛选下车站",
                     query = s.query,
                     onQuery = { stage = s.copy(query = it) },
                     options = stations,
-                    emptyHint = if (s.query.isBlank()) "这已经是终点站，可以不选" else "没有匹配的站点",
+                    emptyHint = if (s.query.isBlank()) "已到达终点站，可不选" else "无匹配站点",
                     onBack = { stage = s.back },
                     leading = {
                         val dark = isSystemInDarkTheme()
@@ -710,7 +710,7 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 )
                             }
                             Spacer(Modifier.height(6.dp))
-                            Text("选了下车站就能估算乘车时间，也能生成回程；也可以跳过",
+                            Text("选择下车站后可估算乘车时长并生成回程，也可跳过",
                                 fontSize = 12.sp, color = Fuse.dim(dark))
                             Spacer(Modifier.height(10.dp))
                             PillButton(secondary = true, onClick = { stage = s.back }) { Text("跳过") }
@@ -745,7 +745,7 @@ private val TIME_RE = Regex("(\\d{1,2})\\s*[:：.]\\s*(\\d{2})")
 fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var name by remember { mutableStateOf(initial?.name ?: "通勤车") }
+    var name by remember { mutableStateOf(initial?.name ?: "通勤班车") }
     var stopName by remember { mutableStateOf(initial?.stopName ?: "") }
     var lat by remember { mutableStateOf(initial?.lat) }
     var lng by remember { mutableStateOf(initial?.lng) }
@@ -778,7 +778,7 @@ fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -
             },
         )
     }
-    PickerScaffold(if (initial == null) "添加通勤车" else "编辑通勤车", onBack) {
+    PickerScaffold(if (initial == null) "添加通勤班车" else "编辑通勤班车", onBack) {
         item {
             GlassCard {
               Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -787,11 +787,11 @@ fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -
                 GlassField(
                     times, { times = it }, label = "发车时刻，如 07:20 07:40 08:00", singleLine = false,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                    supportingText = { Text(if (parsed.isEmpty()) "还没识别到时刻" else "共 ${parsed.size} 班：" + parsed.joinToString(" ") { hhmm(it) }) },
+                    supportingText = { Text(if (parsed.isEmpty()) "未识别到有效时刻" else "共 ${parsed.size} 班：" + parsed.joinToString(" ") { hhmm(it) }) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 // 也可以用滚轮选一个时刻，追加到上面
-                PillButton(secondary = true, onClick = { pickDep = true }) { Text("+ 选一个时刻") }
+                PillButton(secondary = true, onClick = { pickDep = true }) { Text("选择时刻") }
               }
             }
         }
@@ -801,7 +801,7 @@ fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -
                 val dark = isSystemInDarkTheme()
                 SectionLabel("上车点")
                 Text(
-                    if (lat != null && stopName.isNotEmpty()) "已选：$stopName" else if (lat != null) "已用当前位置" else "还没选",
+                    if (lat != null && stopName.isNotEmpty()) "已选：$stopName" else if (lat != null) "已使用当前位置" else "未选择",
                     fontSize = 15.sp, color = Fuse.ink(dark),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -812,14 +812,14 @@ fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -
                                 val l = Loc.current(ctx)
                                 locating = false
                                 if (l == null) Toast.makeText(ctx, "定位失败", Toast.LENGTH_SHORT).show()
-                                else { lat = l.latitude; lng = l.longitude; if (stopName.isEmpty()) stopName = "通勤车上车点" }
+                                else { lat = l.latitude; lng = l.longitude; if (stopName.isEmpty()) stopName = "通勤班车上车点" }
                             }
                         }
-                    }) { Text(if (locating) "定位中…" else "用我现在的位置") }
+                    }) { Text(if (locating) "定位中…" else "使用当前位置") }
                 }
                 GlassField(stopName, { stopName = it }, label = "上车点名称", singleLine = true,
                     modifier = Modifier.fillMaxWidth())
-                SearchField(query, "搜一个离上车点近的站，借用它的位置") { query = it }
+                SearchField(query, "搜索上车点附近的站点并引用其位置") { query = it }
               }
             }
         }
@@ -838,11 +838,11 @@ fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -
                 onClick = {
                     val la = lat; val ln = lng
                     when {
-                        parsed.isEmpty() -> Toast.makeText(ctx, "请填发车时刻", Toast.LENGTH_SHORT).show()
-                        la == null || ln == null -> Toast.makeText(ctx, "请选上车点", Toast.LENGTH_SHORT).show()
+                        parsed.isEmpty() -> Toast.makeText(ctx, "请填写发车时刻", Toast.LENGTH_SHORT).show()
+                        la == null || ln == null -> Toast.makeText(ctx, "请选择上车点", Toast.LENGTH_SHORT).show()
                         else -> onDone(Candidate(
-                            type = Candidate.Type.SHUTTLE, name = name.trim().ifEmpty { "通勤车" },
-                            stopName = stopName.trim().ifEmpty { "通勤车上车点" }, lat = la, lng = ln, departures = parsed,
+                            type = Candidate.Type.SHUTTLE, name = name.trim().ifEmpty { "通勤班车" },
+                            stopName = stopName.trim().ifEmpty { "通勤班车上车点" }, lat = la, lng = ln, departures = parsed,
                         ))
                     }
                 },

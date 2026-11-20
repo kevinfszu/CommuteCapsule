@@ -131,11 +131,11 @@ object Scheduler {
             else -> days[t.dayOfWeek.value - 1]
         }
         if (plan.leaveMode()) {
-            if (inWindow(plan, LocalDateTime.now())) return "正在留意你离开出发地"
-            return "$dayText %02d:%02d 起留意离开出发地".format(t.hour, t.minute)
+            if (inWindow(plan, LocalDateTime.now())) return "正在监测是否离开出发地"
+            return "$dayText %02d:%02d 起监测出发地".format(t.hour, t.minute)
         }
         val learned = ctx != null && Learn.learnedStart(ctx, plan, t.dayOfWeek.value) != null
-        return "$dayText %02d:%02d ${if (learned) "按你的习惯弹出" else "预热"}".format(t.hour, t.minute)
+        return "$dayText %02d:%02d ${if (learned) "按习惯自动唤起" else "预热"}".format(t.hour, t.minute)
     }
 
     private fun alarmIntent(ctx: Context, planId: String): PendingIntent =

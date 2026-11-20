@@ -825,7 +825,7 @@ class CommuteService : Service() {
         val busKey = "${a.option?.candidate?.label()}|${a.arrival?.busId}"
         if (nearSince > 0 && arrSec in 0..120 && stopAlerted != busKey && a.option?.candidate?.isMetro() != true) {
             stopAlerted = busKey
-            LiveNotifier.alert(this, "${a.option?.candidate?.label()} 快到了", a.detail, id = 1006)
+            LiveNotifier.alert(this, "${a.option?.candidate?.label()} 即将到站", a.detail, id = 1006)
         }
 
         // 省电：快出发、在站台附近才开高频 GPS
@@ -962,10 +962,10 @@ class CommuteService : Service() {
         val stay = Decision.mins(p.leaveSec)
         val est = if (p.busEstimated) "约" else ""
         val text = "${clock(now, p.leaveSec)} 出发 → ${c.label()} ${clock(now, p.trainSec)} → " +
-            "${p.busLabel} $est${clock(now, p.busSec)}" + (if (Decision.mins(p.waitSec) == 0) "（换乘几乎不用等）" else "（换乘等约 ${Decision.mins(p.waitSec)} 分）") +
-            (plans.getOrNull(1)?.let { " · 晚一班：${clock(now, it.leaveSec)} 走，赶 ${it.busLabel}" } ?: "")
-        val short = if (p.leaveSec <= 60) "该走了" else "待${stay}分"
-        val title = if (p.leaveSec <= 60) "该出发了 · ${c.stopName}" else "还能待 $stay 分钟"
+            "${p.busLabel} $est${clock(now, p.busSec)}" + (if (Decision.mins(p.waitSec) == 0) "（换乘几乎无需等待）" else "（换乘等待约 ${Decision.mins(p.waitSec)} 分）") +
+            (plans.getOrNull(1)?.let { " · 晚一班：${clock(now, it.leaveSec)} 出发，可乘 ${it.busLabel}" } ?: "")
+        val short = if (p.leaveSec <= 60) "现在出发" else "${stay} 分后出发"
+        val title = if (p.leaveSec <= 60) "现在出发 · ${c.stopName}" else "$stay 分钟后出发"
         val v = LiveNotifier.Visual(title, text, short, trip.name,
             countdownTo = now + p.leaveSec * 1000L, metro = true, trackerRes = R.drawable.ic_metro)
         LiveNotifier.update(this, LiveNotifier.build(this, v)); logLive(v)
@@ -978,7 +978,7 @@ class CommuteService : Service() {
             LiveNotifier.alert(this, "${Decision.mins(p.leaveSec)} 分钟后出发", text, metro = true)
         } else if (p.leaveSec <= 120 && planAlerted != "$key|0") {
             planAlerted = "$key|0"; planDone = true
-            LiveNotifier.alert(this, "该走了 · 去${c.stopName}", text, metro = true)
+            LiveNotifier.alert(this, "现在出发 · 前往${c.stopName}", text, metro = true)
         }
         // 在公司多待一会：胶囊别在出发前就到期收起
         val need = now + p.leaveSec * 1000L + trip.legs.sumOf { it.rideMin + it.transferWalkMin + 10 } * 60_000L
@@ -1177,13 +1177,13 @@ class CommuteService : Service() {
             TraceLog.event("arrive_alert", "d" to d?.toInt(), "near" to near, "busLast" to busLast, "timeUp" to timeUp)
             arriveAlertedAt = now
             saveRun(deadlineAt)   // 立刻存：实测被杀重启 5 次，每次都重弹「快到了」
-            LiveNotifier.alert(this, "即将到达“$name”", "准备下车", metro = metro, id = 1005)
+            LiveNotifier.alert(this, "即将到达「$name」", "请准备下车", metro = metro, id = 1005)
         }
         // 第一次提醒常被忽略：临近到站再确认一次（每段一次）
         if (arriveAlertedAt > 0 && arriveAgainAt == 0L && now >= eta - 25_000) {
             arriveAgainAt = now
             saveRun(deadlineAt)
-            LiveNotifier.alert(this, "即将到达“$name”", "准备下车", metro = metro, id = 1005)
+            LiveNotifier.alert(this, "即将到达「$name」", "请准备下车", metro = metro, id = 1005)
         }
         // 过站：提醒过了、早过了预计到站时间，位置也不在下车站附近 → 已经坐过站
         val overshoot = !overshootAlerted && arriveAlertedAt > 0 && (
@@ -1193,7 +1193,7 @@ class CommuteService : Service() {
             overshootAlerted = true
             saveRun(deadlineAt)
             TraceLog.event("overshoot", "leg" to legIdx, "d" to d?.toInt(), "eta" to eta)
-            LiveNotifier.alert(this, "“$name”已过站", "请下车返回", metro = metro, id = 1007)
+            LiveNotifier.alert(this, "「$name」已过站", "请下车返回", metro = metro, id = 1007)
         }
         // 结束：到了下车站 150 米内；或提醒后过了 5 分钟且超过预计到站时间（地铁 3 分钟、公交 10 分钟）。
         // 新鲜定位显示离下车站 1.5 公里以上时绝不按时间结束（人还在车上，只是车慢）
@@ -1245,19 +1245,19 @@ class CommuteService : Service() {
             else ((eta - now) / 60_000L).toInt()
         val short = when {
             // 公交有定位时以距离为准；地铁/没定位才按时间
-            arriveAlertedAt > 0 && (d != null && d <= 700 || ((metro || d == null) && now >= eta - 60_000)) -> "下车"
+            arriveAlertedAt > 0 && (d != null && d <= 700 || ((metro || d == null) && now >= eta - 60_000)) -> "请下车"
             bsShow != null -> {
                 val m = bsShow.remainM / speed
                 when {
                     bs != null && (bs.remainM < 300 || m < 1) -> "即将到站"
-                    bsShow.stopsLeft >= 3 -> "${bsShow.stopsLeft}站"
-                    else -> "约${kotlin.math.ceil(m).toInt()}分"
+                    bsShow.stopsLeft >= 3 -> "${bsShow.stopsLeft} 站"
+                    else -> "约 ${kotlin.math.ceil(m).toInt()} 分"
                 }
             }
-            arriveAlertedAt > 0 -> "快到了"
-            d != null && d < 1_500 -> "${d.toInt()}米"
-            left > 0 -> "约${left}分"
-            else -> "快到了"
+            arriveAlertedAt > 0 -> "即将到达"
+            d != null && d < 1_500 -> "${d.toInt()} 米"
+            left > 0 -> "约 ${left} 分"
+            else -> "即将到达"
         }
         val mr = if (metro) metroRoutes[legIdx] else null
         // 基站 30 秒才采一次、再加停站：站名常在关门后才切。预计 40 秒内到下一站就先显示「即将到」
@@ -1268,18 +1268,18 @@ class CommuteService : Service() {
                 val passed = metroProgress(mr, total, now).first
                 val next = mr.stations[passed + 1].name
                 val n = mr.hops.coerceAtLeast(1) - passed
-                if (metroSoon) "即将到 $next · 还有 $n 站到 $name" else "当前 ${mr.stations[passed].name} · 下一站 $next · 还有 $n 站到 $name"
+                if (metroSoon) "即将到达 $next · 距 $name 还有 $n 站" else "当前 ${mr.stations[passed].name} · 下一站 $next · 距 $name 还有 $n 站"
             }
             bsShow != null && br != null ->
-                if (bsShow.stopsLeft <= 1) "下一站就是 $name" else "下一站 ${br[bsShow.seg + 1].name} · 还有 ${bsShow.stopsLeft} 站到 $name"
+                if (bsShow.stopsLeft <= 1) "下一站为 $name" else "下一站 ${br[bsShow.seg + 1].name} · 距 $name 还有 ${bsShow.stopsLeft} 站"
             else -> "前往 $name" + (d?.let { " · 还有约 ${"%.1f".format(it / 1000)} 公里" } ?: "")
         }
         // 流体云标题：地铁有站点数据时直接显示「当前站 → 下一站」
         val metroCur = if (mr != null && arriveAlertedAt == 0L) metroProgress(mr, total, now).first else -1
         val title = when {
-            metroCur >= 0 && metroSoon -> "$lineTitle · 即将到 ${mr!!.stations[metroCur + 1].name}"
+            metroCur >= 0 && metroSoon -> "$lineTitle · 即将到达 ${mr!!.stations[metroCur + 1].name}"
             metroCur >= 0 -> "$lineTitle · ${mr!!.stations[metroCur].name} → ${mr.stations[metroCur + 1].name}"
-            else -> "$lineTitle · 到 $name"
+            else -> "$lineTitle · 前往 $name"
         }
         val v = LiveNotifier.Visual(title, text, short,
             if (trip.legs.size > 1) "${trip.name} · 第 ${legIdx + 1}/${trip.legs.size} 段" else trip.name,
@@ -1502,7 +1502,7 @@ class CommuteService : Service() {
         clearRun()
         LiveState.clearPersisted(this)
         if (instance === this || instance == null) LiveState.snapshot.value = null
-        LiveNotifier.replace(this, LiveNotifier.quiet(this, "${trip.name} 已到站", "正在记录到目的地的最后一段路（学习常去地点）"))
+        LiveNotifier.replace(this, LiveNotifier.quiet(this, "${trip.name} 已到站", "正在记录前往目的地的最后一段路程（用于学习常去地点）"))
         TraceLog.event("tail_start", "by" to by)
         holdCpu(false)
         stepSensor(false)
@@ -1989,7 +1989,7 @@ class CommuteService : Service() {
                 Diag.mark(this, "快到${alightName(metroIdx)}，按播报校准")
                 if (metroIdx == legIdx && arriveAlertedAt == 0L) {
                     arriveAlertedAt = System.currentTimeMillis()
-                    LiveNotifier.alert(this, "即将到达“${legAlightName(legIdx)}”", "准备下车", metro = true, id = 1005)
+                    LiveNotifier.alert(this, "即将到达「${legAlightName(legIdx)}」", "请准备下车", metro = true, id = 1005)
                 }
                 saveRun(deadlineAt)
                 kick()

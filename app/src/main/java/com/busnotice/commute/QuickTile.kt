@@ -16,7 +16,7 @@ class QuickTile : TileService() {
         super.onStartListening()
         qsTile?.apply {
             state = if (CommuteService.instance != null) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-            subtitle = pick()?.name ?: "未设置行程"
+            subtitle = pick()?.name ?: "未配置行程"
             updateTile()
         }
     }

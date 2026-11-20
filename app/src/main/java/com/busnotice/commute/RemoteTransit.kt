@@ -22,7 +22,7 @@ object RemoteTransit {
         }
         try {
             val code = conn.responseCode
-            if (code !in 200..299) throw IllegalStateException("拉取失败：HTTP $code")
+            if (code !in 200..299) throw IllegalStateException("获取失败：HTTP $code")
             val out = ByteArrayOutputStream()
             val buf = ByteArray(8192)
             var total = 0
@@ -31,11 +31,11 @@ object RemoteTransit {
                     val n = input.read(buf)
                     if (n < 0) break
                     total += n
-                    if (total > MAX_BYTES) throw IllegalStateException("数据超过 2 MiB，已中止")
+                    if (total > MAX_BYTES) throw IllegalStateException("数据超过 2 MiB，已终止")
                     out.write(buf, 0, n)
                 }
             }
-            if (total == 0) throw IllegalStateException("拉取失败：内容为空")
+            if (total == 0) throw IllegalStateException("获取失败：内容为空")
             String(out.toByteArray(), Charsets.UTF_8)
         } finally {
             conn.disconnect()

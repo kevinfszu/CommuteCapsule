@@ -51,30 +51,30 @@ object LiveNotifier {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.deleteNotificationChannel("commute_alert")
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_LIVE, "通勤实时胶囊", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "出发倒计时和到站信息（流体云）"
+            NotificationChannel(CHANNEL_LIVE, "通勤实时提醒", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = "出发倒计时与到站信息（流体云）"
                 setSound(null, null)
                 enableVibration(false)
             }
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_QUIET, "到站后记录", NotificationManager.IMPORTANCE_MIN).apply {
-                description = "到站后记录走到目的地的那段路（用来学习常去地点），最多 25 分钟"
+            NotificationChannel(CHANNEL_QUIET, "到站后续记录", NotificationManager.IMPORTANCE_MIN).apply {
+                description = "记录到站后步行至目的地的路段（用于学习常去地点），最长 25 分钟"
                 setSound(null, null)
                 enableVibration(false)
                 setShowBadge(false)
             }
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_POP, "车快到了（展开流体云）", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "车快到、该出发、快到站时，把流体云胶囊直接展开成卡片；震动由 App 自己控制"
+            NotificationChannel(CHANNEL_POP, "车辆临近提醒（流体云）", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "车辆临近、需要出发或即将到站时展开流体云卡片；振动由应用控制"
                 setSound(null, null)
                 enableVibration(false)
             }
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_ALERT, "该出门了提醒", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "需要马上出发、或换乘紧张时横幅 + 震动"
+            NotificationChannel(CHANNEL_ALERT, "出发提醒", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "需要立即出发或换乘时间紧张时，以横幅与振动提醒"
                 enableVibration(true)
                 vibrationPattern = longArrayOf(0, 250, 150, 250)
             }
@@ -101,7 +101,7 @@ object LiveNotifier {
     }
 
     fun warming(ctx: Context, tripName: String): Notification =
-        base(ctx, Visual(tripName, "正在定位、查询实时公交…", "定位中")).build()
+        base(ctx, Visual(tripName, "正在定位并查询实时公交…", "定位中")).build()
 
     fun build(ctx: Context, v: Visual, channel: String = CHANNEL_LIVE): Notification {
         if (channel == CHANNEL_LIVE) lastVisual = v
@@ -229,8 +229,8 @@ object LiveNotifier {
         val n = NotificationCompat.Builder(ctx, CHANNEL_ALERT)
             .setSmallIcon(R.drawable.ic_bus)
             .setColor(BLUE)
-            .setContentTitle("${trip.name}：点一下开始")
-            .setContentText("系统没让胶囊在后台自动启动，点这里启动")
+            .setContentTitle("${trip.name}：点击开始")
+            .setContentText("系统未允许胶囊后台自动启动，请点击此处启动")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pi)
@@ -258,9 +258,9 @@ object LiveNotifier {
             .setDeleteIntent(actionIntent(ctx, ActionReceiver.ACTION_DISMISSED))
             .apply {
                 if (CommuteService.undoActive()) addAction(0, "撤销上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
-                else if (!v.riding) addAction(0, "已上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
+                else if (!v.riding) addAction(0, "确认上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
             }
-            .addAction(0, if (v.riding) "结束" else "关闭", actionIntent(ctx, ActionReceiver.ACTION_STOP))
+            .addAction(0, if (v.riding) "结束行程" else "关闭提醒", actionIntent(ctx, ActionReceiver.ACTION_STOP))
 
     private fun openApp(ctx: Context) = PendingIntent.getActivity(
         ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),

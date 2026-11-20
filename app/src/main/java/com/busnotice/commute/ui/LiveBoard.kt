@@ -98,7 +98,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
     val alightName = leg?.candidates?.firstOrNull { it.alightName.isNotEmpty() }?.alightName
         ?: trip?.legs?.getOrNull(s.legIndex + 1)?.candidates?.firstOrNull()?.stopName
     val headText = when {
-        s.riding && !alightName.isNullOrEmpty() -> "到 $alightName"
+        s.riding && !alightName.isNullOrEmpty() -> "至 $alightName"
         !main?.stopName.isNullOrEmpty() -> main!!.stopName
         else -> s.legTitle
     }
@@ -191,9 +191,9 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
                 // 刚手点过「已上车」：2 分钟内这个按钮是撤销，防误点、防连点跳两段
                 Pill("撤销上车", Color.White.copy(alpha = 0.12f), Fuse.Yellow, Fuse.Yellow.copy(alpha = 0.5f), Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
             } else if (!s.riding) {
-                Pill("已上车", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
+                Pill("确认上车", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
             }
-            Pill("结束", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) {
+            Pill("结束行程", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) {
                 if (s.tripId == com.busnotice.commute.DemoPlayer.TRIP_ID) com.busnotice.commute.DemoPlayer.stop(ctx)
                 else CommuteService.stop(ctx)
             }
@@ -207,10 +207,10 @@ fun RestoringBoard(tripName: String, dark: Boolean) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxWidth().board(dark).padding(18.dp)) {
         Text(tripName, color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("正在恢复…", color = Fuse.Yellow, fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
-        Text("行程还在进行，马上刷新到最新状态", color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
+        Text("正在恢复", color = Fuse.Yellow, fontSize = 32.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+        Text("行程仍在进行，正在同步最新状态", color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(top = 6.dp))
         Row(Modifier.padding(top = 14.dp)) {
-            Pill("结束", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) {
+            Pill("结束行程", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) {
                 CommuteService.stop(ctx)
             }
         }
@@ -265,14 +265,14 @@ private fun StopDots(passed: Int, total: Int, from: String? = null, curName: Str
         }
         BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 4.dp)) {
             val labelColor = Color.White.copy(alpha = 0.5f)
-            Text(from ?: "上车", color = labelColor, fontSize = 11.sp, maxLines = 1,
+            Text(from ?: "上车站", color = labelColor, fontSize = 11.sp, maxLines = 1,
                 modifier = Modifier.align(Alignment.CenterStart).widthIn(max = 72.dp))
-            Text(to ?: "下车", color = labelColor, fontSize = 11.sp, maxLines = 1,
+            Text(to ?: "下车站", color = labelColor, fontSize = 11.sp, maxLines = 1,
                 modifier = Modifier.align(Alignment.CenterEnd).widthIn(max = 72.dp))
             val f = cur.toFloat() / total
             if (f in 0.25f..0.75f) {
                 // 当前站名居中到当前点下方（标签最宽约 64dp）
-                val label = curName ?: "当前"
+                val label = curName ?: "当前站"
                 val half = (if (curName != null) 32 else 12).dp
                 val cx = 8.dp + (maxWidth - 16.dp) * f - half
                 Text(label, color = Fuse.Yellow, fontSize = 11.sp, maxLines = 1, textAlign = androidx.compose.ui.text.style.TextAlign.Center,

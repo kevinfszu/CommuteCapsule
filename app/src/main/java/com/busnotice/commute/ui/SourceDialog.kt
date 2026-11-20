@@ -59,7 +59,7 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                 version++
                 region = Transit.region
                 Toast.makeText(
-                    ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站", Toast.LENGTH_LONG,
+                    ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG,
                 ).show()
             }.onFailure {
                 Toast.makeText(ctx, "导入失败：${it.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
@@ -77,10 +77,10 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text("线路和站点：$sourceTitle", fontSize = 14.sp)
-                Text("实时到站：${Transit.realtime?.title ?: "无（用学到的时刻表和估算）"}", fontSize = 14.sp)
+                Text("实时到站：${Transit.realtime?.title ?: "无（使用学习到的时刻表与估算数据）"}", fontSize = 14.sp)
                 GlassField(
                     region, { region = it }, label = "区域编号",
-                    supportingText = { Text("数据源自己的城市编号，换城市时才需要改") },
+                    supportingText = { Text("数据源自带的城市编号，仅在更换城市时修改") },
                 )
                 PillButton(
                     onClick = { picker.launch(arrayOf("*/*")) },
@@ -90,7 +90,7 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                 ) { Text(if (importing) "导入中…" else "导入 JSON 文件") }
                 GlassField(
                     dataUrl, { dataUrl = it }, label = "数据地址",
-                    supportingText = { Text("返回 JSON 的 http/https 地址，拉取成功后记住") },
+                    supportingText = { Text("返回 JSON 的 http/https 地址，导入成功后将自动保存") },
                     singleLine = true,
                 )
                 PillButton(
@@ -108,17 +108,17 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                                 version++
                                 region = Transit.region
                                 Toast.makeText(
-                                    ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站", Toast.LENGTH_LONG,
+                                    ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG,
                                 ).show()
                             }.onFailure {
-                                Toast.makeText(ctx, "拉取失败：${it.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                                Toast.makeText(ctx, "导入失败：${it.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
                             }
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !importing && dataUrl.isNotBlank(),
                     secondary = true,
-                ) { Text(if (importing) "拉取中…" else "从链接拉取") }
+                ) { Text(if (importing) "导入中…" else "从链接导入") }
                 if (meta != null) {
                     if (meta.source.isNotBlank()) Text(
                         "数据：${meta.source}" + (if (meta.updated.isNotBlank()) "（${meta.updated}）" else ""),
@@ -138,10 +138,10 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                         },
                         modifier = Modifier.fillMaxWidth(),
                         secondary = true,
-                    ) { Text("删除导入数据，恢复默认") }
+                    ) { Text("删除导入数据并恢复默认") }
                 }
                 Text(
-                    "JSON 格式见 docs/DATA_SOURCE.md。导入后如正在行程中，请结束并重新开始。",
+                    "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",
                     fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
                 )
             }

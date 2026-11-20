@@ -52,33 +52,33 @@ object JsonTransit {
 
     fun parse(text: String): Doc {
         val root = runCatching { JSONObject(text) }
-            .getOrElse { throw IllegalArgumentException("不是合法的 JSON：${it.message ?: "解析失败"}") }
-        val arr = root.optJSONArray("lines") ?: throw IllegalArgumentException("缺少 lines 数组")
-        if (arr.length() == 0) throw IllegalArgumentException("lines 不能为空")
+            .getOrElse { throw IllegalArgumentException("JSON 格式无效：${it.message ?: "解析失败"}") }
+        val arr = root.optJSONArray("lines") ?: throw IllegalArgumentException("缺少 lines 数组字段")
+        if (arr.length() == 0) throw IllegalArgumentException("lines 数组不能为空")
 
         val ids = mutableSetOf<String>()
         val lines = (0 until arr.length()).map { idx ->
-            val o = arr.optJSONObject(idx) ?: throw IllegalArgumentException("第 ${idx + 1} 条线路不是对象")
+            val o = arr.optJSONObject(idx) ?: throw IllegalArgumentException("第 ${idx + 1} 条线路的数据不是对象")
             val id = o.optString("id", "").trim()
-            if (id.isEmpty()) throw IllegalArgumentException("第 ${idx + 1} 条线路缺少 id")
+            if (id.isEmpty()) throw IllegalArgumentException("第 ${idx + 1} 条线路缺少 id 字段")
             if (!ids.add(id)) throw IllegalArgumentException("线路 id 重复：$id")
 
             val name = o.optString("name", "").trim()
-            if (name.isEmpty()) throw IllegalArgumentException("线路 $id 缺少 name")
+            if (name.isEmpty()) throw IllegalArgumentException("线路 $id 缺少 name 字段")
             val subway = o.optBoolean("subway", false)
             val loop = o.optBoolean("loop", false)
 
-            val stopsArr = o.optJSONArray("stops") ?: throw IllegalArgumentException("线路 $name 缺少 stops")
-            if (stopsArr.length() < 2) throw IllegalArgumentException("线路 $name 至少需要 2 个站")
+            val stopsArr = o.optJSONArray("stops") ?: throw IllegalArgumentException("线路 $name 缺少 stops 字段")
+            if (stopsArr.length() < 2) throw IllegalArgumentException("线路 $name 至少需要 2 个站点")
             var stops = (0 until stopsArr.length()).map { si ->
                 val s = stopsArr.optJSONObject(si)
-                    ?: throw IllegalArgumentException("线路 $name 第 ${si + 1} 个站不是对象")
+                    ?: throw IllegalArgumentException("线路 $name 的第 ${si + 1} 个站点数据不是对象")
                 val stopName = s.optString("name", "").trim()
-                if (stopName.isEmpty()) throw IllegalArgumentException("线路 $name 第 ${si + 1} 个站缺少 name")
+                if (stopName.isEmpty()) throw IllegalArgumentException("线路 $name 的第 ${si + 1} 个站点缺少 name 字段")
                 val lat = s.optDouble("lat", Double.NaN)
                 val lng = s.optDouble("lng", Double.NaN)
                 if (lat.isNaN() || lng.isNaN() || lat !in -90.0..90.0 || lng !in -180.0..180.0) {
-                    throw IllegalArgumentException("线路 $name 的站 $stopName 坐标不合法")
+                    throw IllegalArgumentException("线路 $name 的站点 $stopName 坐标无效")
                 }
                 Stop(
                     name = stopName,

@@ -23,7 +23,7 @@ object ImportedJsonSource : StaticSource {
 
     override val id = "imported"
     override val title: String
-        get() = doc?.let { "导入的 JSON（${it.lineCount} 条线路 / ${it.stationCount} 站）" } ?: "导入的 JSON"
+        get() = doc?.let { "导入的 JSON（${it.lineCount} 条线路 / ${it.stationCount} 个站点）" } ?: "导入的 JSON"
 
     /** 启动时读取已导入的文件；文件不存在或损坏返回 false。 */
     fun load(ctx: Context): Boolean {

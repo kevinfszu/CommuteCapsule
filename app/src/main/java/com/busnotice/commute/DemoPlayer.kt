@@ -21,7 +21,7 @@ import kotlin.math.ceil
  */
 object DemoPlayer {
     const val TRIP_ID = "demo-replay"
-    const val BADGE = "演示回放 · 站点均为虚构"
+    const val BADGE = "演示回放 · 站点为虚构数据"
 
     private const val METRO = "星河线"
     private const val BUS = "K7路"
@@ -43,7 +43,7 @@ object DemoPlayer {
     private val HOME = ALIGHT + 40        // 到站后停一下再显示「到家了」
     private val END = HOME + 20
     val trip = Trip(
-        id = TRIP_ID, name = "回家", startMinute = 12 * 60, endMinute = 13 * 60 + 20,
+        id = TRIP_ID, name = "返程", startMinute = 12 * 60, endMinute = 13 * 60 + 20,
         legs = listOf(
             Leg(listOf(Candidate(Candidate.Type.METRO, METRO, METRO_STOPS.first(), 0.0, 0.0, alightName = METRO_STOPS.last())), rideMin = 8),
             Leg(listOf(Candidate(Candidate.Type.BUS, BUS, BUS_STOPS.first(), 0.0, 0.0, alightName = BUS_STOPS.last())), rideMin = 8, transferWalkMin = WALK),
@@ -53,7 +53,7 @@ object DemoPlayer {
     // 首页在演示期间显示的行程卡：全是虚构的，不露真实线路和时间
     val showTrips = listOf(
         Trip(
-            id = "demo-out", name = "出门",
+            id = "demo-out", name = "去程",
             legs = listOf(
                 Leg(listOf(Candidate(Candidate.Type.BUS, BUS, BUS_STOPS.last(), 0.0, 0.0, alightName = BUS_STOPS.first())), rideMin = 22),
                 Leg(listOf(Candidate(Candidate.Type.METRO, METRO, METRO_STOPS.last(), 0.0, 0.0, alightName = METRO_STOPS.first())), rideMin = 18, transferWalkMin = 4),
@@ -80,7 +80,7 @@ object DemoPlayer {
             for (n in COUNTDOWN downTo 1) {
                 countdown.value = n
                 LiveNotifier.replace(app, LiveNotifier.build(app, LiveNotifier.Visual(
-                    title = "演示 $n 秒后开始", text = "可以回到桌面了 · 演示回放", short = "${n}秒", sub = "演示回放",
+                    title = "演示将于 $n 秒后开始", text = "可返回桌面等待 · 演示回放", short = "${n}秒", sub = "演示回放",
                     progress = null, stops = 0, trackerRes = R.drawable.ic_metro, metro = true, riding = false,
                 )))
                 delay(1000)
@@ -131,12 +131,12 @@ object DemoPlayer {
 
     // 和真实行程一样的弹窗（文案格式取自真实提醒）
     private val ALERTS by lazy { listOf(
-        Alert(T0, "现在走 · $METRO", "步行约 3 分钟到${METRO_STOPS.first()} · 本趟约 4 分钟进站 · 下趟约 10 分钟", true),
-        Alert(IN - 60, "快到 ${METRO_STOPS.first()} · $METRO 约2分", "步行约 1 分钟到${METRO_STOPS.first()} · 本趟约 2 分钟进站 · 下趟约 8 分钟", true),
+        Alert(T0, "现在出发 · $METRO", "步行约 3 分钟到${METRO_STOPS.first()} · 本趟约 4 分钟进站 · 下趟约 10 分钟", true),
+        Alert(IN - 60, "即将到达 ${METRO_STOPS.first()} · $METRO 约 2 分", "步行约 1 分钟到${METRO_STOPS.first()} · 本趟约 2 分钟进站 · 下趟约 8 分钟", true),
         Alert(IN, "已进站 · $METRO", "本趟约 1 分钟进站 · 下趟约 7 分钟", true),
-        Alert(XFER - 90, "即将到达“${METRO_STOPS.last()}”", "准备下车 · 下车后步行约 $WALK 分钟到${BUS_STOPS.first()}换乘 $BUS"),
-        Alert(LEAVE, "现在走 · $BUS", "$BUS 4 分钟到 · 还有 2 站 · 步行 $WALK 分钟"),
-        Alert(PROMPT, "即将到达“${BUS_STOPS.last()}”", "准备下车"),
+        Alert(XFER - 90, "即将到达「${METRO_STOPS.last()}」", "请准备下车 · 下车后步行约 $WALK 分钟到${BUS_STOPS.first()}换乘 $BUS"),
+        Alert(LEAVE, "现在出发 · $BUS", "$BUS 4 分钟到 · 还有 2 站 · 步行 $WALK 分钟"),
+        Alert(PROMPT, "即将到达「${BUS_STOPS.last()}」", "请准备下车"),
     ) }
     private val LEAVE get() = BUS_ARR - (WALK + 1) * 60   // 步行 3 分钟 + 1 分钟余量 → 现在走
 
@@ -159,37 +159,37 @@ object DemoPlayer {
         )
         val walk = l1.transferWalkMin
         val sn = when {
-            v < T0 -> snap(0, "${minsTo(v, T0)}分后走", "按 $BUS 倒推 · ${hm(T0)} 出发 · ${hm(XFER)} 到${METRO_STOPS.last()}换乘",
+            v < T0 -> snap(0, "${minsTo(v, T0)} 分钟后出发", "按 $BUS 倒推 · ${hm(T0)} 出发 · ${hm(XFER)} 到${METRO_STOPS.last()}换乘",
                 Decision.Mode.LEAVE_LATER, progress = ((v - PRE) * 100 / (T0 - PRE)))
-            v < IN -> snap(0, "约${minsTo(v, RIDE)}分", "步行约 ${minsTo(v, IN)} 分钟到${METRO_STOPS.first()} · ${trainText(v)}",
+            v < IN -> snap(0, "约 ${minsTo(v, RIDE)} 分", "步行约 ${minsTo(v, IN)} 分钟到${METRO_STOPS.first()} · ${trainText(v)}",
                 Decision.Mode.METRO, progress = ((v - T0) * 100 / (IN - T0)))
             v < RIDE -> snap(0, "已进站", "${METRO_STOPS.first()} · ${trainText(v)}", Decision.Mode.METRO)
             v < XFER -> {
                 val p = ((v - RIDE) * (METRO_STOPS.size - 1) / (XFER - RIDE)).coerceIn(0, METRO_STOPS.size - 2)
-                snap(0, "${minsTo(v, XFER)}分钟", "下一站 ${METRO_STOPS[p + 1]} · ${hm(XFER)} 到${METRO_STOPS.last()}换乘",
+                snap(0, "${minsTo(v, XFER)} 分钟", "下一站 ${METRO_STOPS[p + 1]} · ${hm(XFER)} 到${METRO_STOPS.last()}换乘",
                     Decision.Mode.METRO, riding = true, passed = p, stops = METRO_STOPS)
             }
             v < LEAVE -> {
                 val m = minsTo(v, BUS_ARR)
                 val leaveIn = minsTo(v, LEAVE)
-                snap(1, "${leaveIn}分后走", "在站内等 · $BUS ${m} 分钟到 · 还有 ${maxOf(1, ceil(m / 2.5).toInt())} 站 · 步行 $walk 分钟",
+                snap(1, "${leaveIn} 分钟后出发", "在站内等 · $BUS ${m} 分钟到 · 还有 ${maxOf(1, ceil(m / 2.5).toInt())} 站 · 步行 $walk 分钟",
                     Decision.Mode.LEAVE_LATER)
             }
-            v < BUS_ARR - 30 -> snap(1, "现在走", "$BUS ${minsTo(v, BUS_ARR)} 分钟到 · 还有 ${maxOf(1, ceil(minsTo(v, BUS_ARR) / 2.5).toInt())} 站 · 步行 $walk 分钟",
+            v < BUS_ARR - 30 -> snap(1, "现在出发", "$BUS ${minsTo(v, BUS_ARR)} 分钟到 · 还有 ${maxOf(1, ceil(minsTo(v, BUS_ARR) / 2.5).toInt())} 站 · 步行 $walk 分钟",
                 Decision.Mode.LEAVE_NOW)
-            v < BUS_ARR -> snap(1, "车快到了", "$BUS 即将进站 · 你已到${BUS_STOPS.first()}", Decision.Mode.AT_STOP)
-            v < TAP -> snap(1, "车到站了", "$BUS 已进站 · ${BUS_STOPS.first()}", Decision.Mode.AT_STOP)
-            v < TAP + 30 -> snap(1, "已上车", "刷卡确认上车 · ${hms(TAP)}", null, riding = true, passed = 0, stops = BUS_STOPS)
+            v < BUS_ARR -> snap(1, "车辆即将到站", "$BUS 即将进站 · 你已到${BUS_STOPS.first()}", Decision.Mode.AT_STOP)
+            v < TAP -> snap(1, "车辆已到站", "$BUS 已进站 · ${BUS_STOPS.first()}", Decision.Mode.AT_STOP)
+            v < TAP + 30 -> snap(1, "已确认上车", "刷卡确认上车 · ${hms(TAP)}", null, riding = true, passed = 0, stops = BUS_STOPS)
             v < PROMPT -> {
                 val p = ((v - TAP) * (BUS_STOPS.size - 1) / (ALIGHT - TAP)).coerceIn(0, BUS_STOPS.size - 2)
-                snap(1, "${BUS_STOPS.size - 1 - p}站", "下一站 ${BUS_STOPS[p + 1]} · 约 ${hm(ALIGHT)} 下车", null,
+                snap(1, "${BUS_STOPS.size - 1 - p} 站", "下一站 ${BUS_STOPS[p + 1]} · 约 ${hm(ALIGHT)} 下车", null,
                     riding = true, passed = p, stops = BUS_STOPS)
             }
-            v < ALIGHT -> snap(1, "准备下车", "下一站 ${BUS_STOPS.last()} · 准备下车", null, riding = true,
+            v < ALIGHT -> snap(1, "请准备下车", "下一站 ${BUS_STOPS.last()} · 请准备下车", null, riding = true,
                 passed = BUS_STOPS.size - 2, stops = BUS_STOPS)
-            v < HOME -> snap(1, "已到站", "已到 ${BUS_STOPS.last()} · 下车", null, riding = true,
+            v < HOME -> snap(1, "已到站", "已到达 ${BUS_STOPS.last()} · 请下车", null, riding = true,
                 passed = BUS_STOPS.size - 1, stops = BUS_STOPS)
-            else -> snap(1, "到家了", "${hm(HOME)} 到家 · 全程约 ${(HOME - T0) / 60} 分钟", null, riding = true,
+            else -> snap(1, "已到达", "${hm(HOME)} 到达 · 全程约 ${(HOME - T0) / 60} 分钟", null, riding = true,
                 passed = BUS_STOPS.size - 1, stops = BUS_STOPS)
         }
         val metro = sn.legIndex == 0

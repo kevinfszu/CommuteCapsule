@@ -43,7 +43,7 @@ fun UpdateDialog(tick: Int) {
         if (forced == 0) return@LaunchedEffect
         rel = Updater.check(ctx, force = true)
         if (rel == null) android.widget.Toast.makeText(ctx,
-            if (Updater.lastOk) "已经是最新版 v${Updater.currentName(ctx)}" else "连不上 GitHub，稍后再试",
+            if (Updater.lastOk) "已经是最新版本 v${Updater.currentName(ctx)}" else "无法连接 GitHub，请稍后重试",
             android.widget.Toast.LENGTH_SHORT).show()
     }
     // 去设置里打开「安装未知应用」后回来，自动接着安装
@@ -59,7 +59,7 @@ fun UpdateDialog(tick: Int) {
         title = { Text("有新版本 v${r.name}") },
         text = {
             Column {
-                Text("当前 v${Updater.currentName(ctx)}。" + if (error) "下载失败，网络不好时可以稍后再试。" else "")
+                Text("当前版本 v${Updater.currentName(ctx)}。" + if (error) "下载失败，请检查网络后重试。" else "")
                 if (downloading) {
                     Spacer(Modifier.height(12.dp))
                     LinearProgressIndicator(
@@ -95,7 +95,7 @@ fun UpdateDialog(tick: Int) {
 @Composable
 private fun Row2(onLater: () -> Unit, onSkip: () -> Unit) {
     androidx.compose.foundation.layout.Row {
-        DialogButton("跳过此版", onClick = onSkip)
+        DialogButton("跳过此版本", onClick = onSkip)
         DialogButton("稍后", onClick = onLater)
     }
 }

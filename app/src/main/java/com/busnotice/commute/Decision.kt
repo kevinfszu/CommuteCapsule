@@ -104,7 +104,7 @@ object Decision {
             .map { Arrival(it.coerceAtLeast(0)) }
 
     fun decide(options: List<Option>, connecting: Boolean = false): Advice {
-        if (options.isEmpty()) return Advice(Mode.NO_BUS, null, null, 0, 0, "未设置", "这段行程还没有添加线路")
+        if (options.isEmpty()) return Advice(Mode.NO_BUS, null, null, 0, 0, "未设置", "本段行程尚未添加线路")
 
         val metros = options.filter { it.candidate.type == Candidate.Type.METRO }
         if (metros.size == options.size) return metroAdvice(metros)
@@ -120,13 +120,13 @@ object Decision {
             val b = all.minByOrNull { if (it.second.stopsAway < 0) Int.MAX_VALUE else it.second.stopsAway }
             val tip = options.map { it.tip }.firstOrNull { it.isNotEmpty() } ?: ""
             val detail = when {
-                b != null && b.second.stopsAway >= 0 -> "${b.first.candidate.label()} 最近一班" +
+                b != null && b.second.stopsAway >= 0 -> "${b.first.candidate.label()} 最近班次" +
                     (if (b.second.stopsAway == 0) "已到站" else "还有 ${b.second.stopsAway} 站") +
                     if (tip.isNotEmpty()) " · $tip" else ""
                 tip.isNotEmpty() -> tip
                 else -> "暂无车辆信息"
             }
-            val head = if (b != null && b.second.stopsAway >= 0) (if (b.second.stopsAway == 0) "已到站" else "${b.second.stopsAway}站") else "无车"
+            val head = if (b != null && b.second.stopsAway >= 0) (if (b.second.stopsAway == 0) "已到站" else "${b.second.stopsAway}站") else "暂无车辆"
             return Advice(Mode.NO_BUS, b?.first ?: options.first(), b?.second, options.first().walkSec, 0, head, detail)
         }
 
@@ -144,25 +144,25 @@ object Decision {
                 val tight = known.firstOrNull { it.second.etaSec >= it.first.walkSec }
                 if (tight != null) {
                     val (o, a) = tight
-                    return Advice(Mode.CONNECT_MISS, o, a, o.walkSec, 0, "换乘紧",
-                        "${walkTo(o)}，${o.candidate.label()} ${arriveText(a.etaSec)}，可能赶不上")
+                    return Advice(Mode.CONNECT_MISS, o, a, o.walkSec, 0, "换乘紧张",
+                        "${walkTo(o)}，${o.candidate.label()} ${arriveText(a.etaSec)}，预计无法赶上")
                 }
                 val o = known.first().first
-                return Advice(Mode.CONNECT_MISS, o, null, o.walkSec, 0, "赶不上",
-                    "${walkTo(o)}，暂无赶得上的车" + (nextCatchable(known, o.walkSec)?.let { "，下一班约 ${mins(it).coerceAtLeast(1)} 分钟" } ?: ""))
+                return Advice(Mode.CONNECT_MISS, o, null, o.walkSec, 0, "无法赶上",
+                    "${walkTo(o)}，暂无可行班次" + (nextCatchable(known, o.walkSec)?.let { "，下一班约 ${mins(it).coerceAtLeast(1)} 分钟" } ?: ""))
             }
             val (o, a) = catchable
             val wait = a.etaSec - o.walkSec
-            return Advice(Mode.CONNECT, o, a, o.walkSec, 0, "换${o.candidate.label()}",
+            return Advice(Mode.CONNECT, o, a, o.walkSec, 0, "换乘 ${o.candidate.label()}",
                 "${walkTo(o)} · ${o.candidate.label()} " +
-                    "${arriveText(a.etaSec)}，" + (if (mins(wait) == 0) "几乎不用等" else "等约 ${mins(wait)} 分钟"), nextAfter(catchable))
+                    "${arriveText(a.etaSec)}，" + (if (mins(wait) == 0) "几乎无需等待" else "等待约 ${mins(wait)} 分钟"), nextAfter(catchable))
         }
 
         if (catchable == null) {
             val first = known.first()
-            return Advice(Mode.HURRY, first.first, first.second, first.first.walkSec, 0, "快跑",
+            return Advice(Mode.HURRY, first.first, first.second, first.first.walkSec, 0, "请加快步行",
                 "${first.first.candidate.label()} ${arriveText(first.second.etaSec, "到站")}，" +
-                    "步行要 ${mins(first.first.walkSec).coerceAtLeast(1)} 分钟，有点悬")
+                    "步行需 ${mins(first.first.walkSec).coerceAtLeast(1)} 分钟，时间较为紧张")
         }
 
         val (o, a) = catchable
@@ -177,9 +177,9 @@ object Decision {
         val leaveIn = a.etaSec - o.walkSec - SAFETY_SEC
         val base = "${o.candidate.label()} ${arriveText(a.etaSec)}$stopsText · 步行 ${mins(o.walkSec)} 分钟$nextText"
         return if (leaveIn <= 60) {
-            Advice(Mode.LEAVE_NOW, o, a, o.walkSec, leaveIn.coerceAtLeast(0), "现在走", base, next)
+            Advice(Mode.LEAVE_NOW, o, a, o.walkSec, leaveIn.coerceAtLeast(0), "现在出发", base, next)
         } else {
-            Advice(Mode.LEAVE_LATER, o, a, o.walkSec, leaveIn, "${mins(leaveIn)}分后走", base, next)
+            Advice(Mode.LEAVE_LATER, o, a, o.walkSec, leaveIn, "${mins(leaveIn)} 分钟后出发", base, next)
         }
     }
 
@@ -238,10 +238,10 @@ object Decision {
                 val miss = catchable != null && catchable !== cur && catchable.first.located
                 " · 本趟" + eta(cur.third, cur.second.estimated).let { if (it.endsWith("进站") || it.endsWith("站内")) it else "${it}进站" } +
                     (after?.let { " · 下趟" + eta(it.third, it.second.estimated) } ?: "") +
-                    (if (miss) " · 走过去赶下趟" else "")
+                    (if (miss) " · 步行前往可乘下趟" else "")
             }
             tipEst != null -> " · 下一班约 $tipEst 分钟（估算）"
-            options.any { it.tip == END_OF_SERVICE } -> " · 今天末班已过"
+            options.any { it.tip == END_OF_SERVICE } -> " · 今日末班已过"
             else -> " · 约 $hw 分钟一班"
         }
         val mins = next ?: tipEst
@@ -252,7 +252,7 @@ object Decision {
                 "${oo.candidate.stopName}（定位中）$nextText")
             oo.walkSec == 0 -> Advice(Mode.METRO, oo, catchable?.second, 0, 0, head ?: "进站",
                 "已到 ${oo.candidate.stopName}$nextText")
-            else -> Advice(Mode.METRO, oo, catchable?.second, oo.walkSec, 0, head ?: "去地铁",
+            else -> Advice(Mode.METRO, oo, catchable?.second, oo.walkSec, 0, head ?: "前往地铁站",
                 "步行约 ${mins(oo.walkSec).coerceAtLeast(1)} 分钟到 ${oo.candidate.stopName}$nextText")
         }
     }
@@ -308,7 +308,7 @@ object Decision {
     private fun eta(sec: Int, estimated: Boolean): String {
         val m = (sec + 59) / 60
         return when {
-            sec < 0 -> "正在站内"
+            sec < 0 -> "位于站内"
             m <= 1 -> "即将进站"
             estimated -> "约 $m 分钟"
             else -> "$m 分钟后"

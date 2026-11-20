@@ -39,7 +39,7 @@ class MainActivity : ComponentActivity() {
         val cur = CommuteService.runningTripId()
         if (cur != null && cur != id) {
             // 另一趟正在跑：不悄悄覆盖，回首页让用户自己决定要不要切换
-            android.widget.Toast.makeText(this, "另一趟行程进行中，要切换请在首页点「开始」", android.widget.Toast.LENGTH_LONG).show()
+            android.widget.Toast.makeText(this, "另有行程正在进行，如需切换请在首页点击「开始」", android.widget.Toast.LENGTH_LONG).show()
             return
         }
         runCatching { CommuteService.start(this, id, manual = i.getBooleanExtra(EXTRA_MANUAL, false)) }

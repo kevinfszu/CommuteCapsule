@@ -230,14 +230,14 @@ object DepartAdvisor {
     fun headline(a: Advice, now: Long): String {
         val inMin = ((a.leaveAt - now + 30_000L) / 60_000L).toInt()
         return when {
-            inMin <= 0 -> "现在出发，刚好接上"
+            inMin <= 0 -> "现在出发，可赶上最近班次"
             else -> "约 $inMin 分钟后出发"
         }
     }
 
     fun detail(a: Advice): String =
-        (if (a.missedLeaveAt > 0) "错过 ${hm(a.missedLeaveAt)} 那班 · " else "") +
-            "${hm(a.leaveAt)} 出发，接 ${hm(a.busAt)} 到${a.stop}的 ${a.line}" + when (a.basis) { "sched" -> "（按往日到站时刻）"; "gap" -> "（按间隔推算）"; else -> "" }
+        (if (a.missedLeaveAt > 0) "已错过 ${hm(a.missedLeaveAt)} 班次 · " else "") +
+            "${hm(a.leaveAt)} 出发，接 ${hm(a.busAt)} 到${a.stop}的 ${a.line}" + when (a.basis) { "sched" -> "（按历史到站时刻）"; "gap" -> "（按发车间隔推算）"; else -> "" }
 
     /** 流体云：和行程胶囊同一个通知位，行程一开始就被胶囊本身接替 */
     private fun showCapsule(ctx: Context, a: Advice, now: Long, loud: Boolean) {
@@ -254,12 +254,12 @@ object DepartAdvisor {
             .setSmallIcon(R.drawable.ic_bus).setColor(LiveNotifier.BLUE)
             .setContentTitle(headline(a, now)).setContentText(detail(a))
             .setStyle(NotificationCompat.BigTextStyle().bigText(detail(a)))
-            .setShortCriticalText(if (a.leaveAt > now) "${hm(a.leaveAt)}走" else "该走了")
+            .setShortCriticalText(if (a.leaveAt > now) "${hm(a.leaveAt)} 出发" else "现在出发")
             .setOngoing(true).setRequestPromotedOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setOnlyAlertOnce(!loud).setSilent(!loud)
             .setContentIntent(open)
-            .addAction(0, "今天不提醒", mute)
+            .addAction(0, "今日不再提醒", mute)
             .setTimeoutAfter(maxOf(a.busAt - now, 0L) + 3 * 60_000L)
         if (a.leaveAt > now) b.setWhen(a.leaveAt).setShowWhen(true).setUsesChronometer(true).setChronometerCountDown(true)
         else b.setShowWhen(false)

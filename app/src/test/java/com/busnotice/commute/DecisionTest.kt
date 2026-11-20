@@ -179,7 +179,7 @@ class DecisionTest {
         val a = Decision.decide(listOf(opt(1020, 0, 300)), connecting = true)
         assertEquals(Decision.Mode.CONNECT_MISS, a.mode)
         assertEquals(null, a.arrival)
-        assertTrue(a.detail.contains("暂无赶得上的车"))
+        assertTrue(a.detail.contains("暂无可行班次"))
         assertTrue(!a.detail.contains("0 分钟到"))
         // 知道间隔（10 分钟）：300 → 900 → 1500 秒，第一班赶得上的约 25 分钟
         val c = Candidate(Candidate.Type.BUS, "15", "A站", 0.0, 0.0, headwayMin = 10)
