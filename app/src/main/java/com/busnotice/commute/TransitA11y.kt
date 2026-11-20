@@ -78,7 +78,7 @@ class TransitA11y : AccessibilityService() {
      */
     private fun tapSignal(text: String, pkg: String, now: Long) {
         if (!pkg.contains("systemui") && !pkg.contains("wallet")) return
-        val hit = TapPopup.read(text)
+        val hit = TapPopup.read(text, now)
         if (hit == null) {
             if (TapPopup.mentions(text) && now - lastStaleAt > 60_000L) {
                 lastStaleAt = now
@@ -92,7 +92,7 @@ class TransitA11y : AccessibilityService() {
         lastTapSig = hit.sig; lastTapAt = now
         val kind = hit.kind
         TraceLog.event("tap_popup", "kind" to kind.name, "ctx" to hit.ctx)
-        TransitSignal.post(this, kind, "刷卡弹窗：${kind.name}", pkg, now)
+        TransitSignal.post(this, kind, "刷卡弹窗：${kind.name}", pkg, hit.at ?: now)
         // 行程还没开始（比如公司离车站近，还没走出范围就进站了）：刷卡就直接开始这趟
         if (CommuteService.instance == null && (kind == TransitSignal.Kind.ENTER || kind == TransitSignal.Kind.TAP)) {
             Scheduler.pendingInWindow(this)?.let { plan ->

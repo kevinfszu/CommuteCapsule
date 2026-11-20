@@ -166,6 +166,17 @@ fun TripEditor(
                 }
             }
             item {
+                Section("节点预估（没打卡时用）") {
+                    Stepper("进站后预计多久上车", trip.boardEstimateSec, 0, 900, unit = "秒") {
+                        onChange(trip.copy(boardEstimateSec = it))
+                    }
+                    Stepper("终点下车比出站提前", trip.alightEstimateSec, 0, 900, unit = "秒") {
+                        onChange(trip.copy(alightEstimateSec = it))
+                    }
+                    Text("只用于行程结束后的推算，节点条上带「≈」标记，不参与学习。", fontSize = 12.sp, lineHeight = 17.sp, color = dim)
+                }
+            }
+            item {
                 Section("胶囊唤起方式") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         GlassChip(selected = !trip.leaveMode(), onClick = { onChange(trip.copy(leaveRadiusM = 0)) },

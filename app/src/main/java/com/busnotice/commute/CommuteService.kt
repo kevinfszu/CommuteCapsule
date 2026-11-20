@@ -297,6 +297,8 @@ class CommuteService : Service() {
         maxStops.clear(); maxEta.clear()
         manualRun = manual; pendingBoardAt = 0L; pendingBoardLoc = null; boardCommitted = false; riding = false
         arriveAlertedAt = 0L; arriveAgainAt = 0L; overshootAlerted = false; alightLeg = -1
+        alightAlertAt.clear()
+        resetAlightGuard()
         speeds.clear(); routeHits.clear(); lastGpsFix = null
         resetBusRide(); busRoute = null; busRouteLine = ""
         power = null; highSince = 0L; coolUntil = 0L
@@ -309,6 +311,16 @@ class CommuteService : Service() {
         geoStart = intent?.getBooleanExtra("fresh", false) == true && !restart && !manual
         if (fresh) clearRun()
         val resumedDl = if (fresh) null else restoreRun(t)
+        // 节点时间轴：新行程开一份；接着中断前那趟跑就沿用原来的记录
+        if (resumedDl == null) {
+            nodeStartedAt = System.currentTimeMillis()
+            NodeLog.begin(this, t.id, nodeStartedAt)
+            stampNode(NodeLog.Kind.DEPART, 0, startedAt, if (manual) NodeLog.Src.MANUAL else NodeLog.Src.AUTO)
+        } else {
+            nodeStartedAt = runPrefs().getLong("nodeStart", 0L)
+            NodeLog.loadActive(this)
+        }
+        syncNodeCurrent()
         // 看板缓存：接着中断前那趟跑就先用存下的看板顶上（第一轮刷新前首页不空着）；新的一趟就删掉旧缓存
         if (resumedDl != null) LiveState.ensureRestored(this, t.id) else LiveState.clearPersisted(this)
         loop = scope.launch { runLoop(resumedDl ?: if (fresh) freshDeadline(t) else deadline(t, manual)) }
@@ -324,11 +336,11 @@ class CommuteService : Service() {
 
     private fun freshDeadline(t: Trip): Long =
         System.currentTimeMillis() +
-            (t.legs.indices.sumOf { Learn.ride(this, t, it, metroSecOf(t, it)).minutes + t.legs[it].transferWalkMin } + 50) * 60_000L
+            (t.legs.indices.sumOf { Learn.ride(this, t, it, metroSecOf(t, it)).minutes + transferWalkMin(t, it) } + 50) * 60_000L
 
     private fun deadline(t: Trip, manual: Boolean): Long {
         val now = System.currentTimeMillis()
-        fun rideAndWalk(t: Trip, i: Int) = Learn.ride(this, t, i, metroSecOf(t, i)).minutes + t.legs[i].transferWalkMin
+        fun rideAndWalk(t: Trip, i: Int) = Learn.ride(this, t, i, metroSecOf(t, i)).minutes + transferWalkMin(t, i)
         val rideTotal = t.legs.indices.sumOf { rideAndWalk(t, it) } + 20
         if (manual) return now + maxOf(MANUAL_RUN_MS, rideTotal * 60_000L)
         // 「离开某地才弹」：启动时刻不固定，从现在起留足整段路程
@@ -413,6 +425,226 @@ class CommuteService : Service() {
     private var startedAt = 0L
     private var stationAt = 0L     // 推断进站的时刻
     private var alightAt = 0L      // 推断下了上一段地铁的时刻
+    // ---------- 节点时间轴 / 防坐过站 ----------
+    private var nodeStartedAt = 0L          // NodeLog 的行程键（不受 startedAt 恢复逻辑影响）
+    private var alightAckedAt = 0L          // 用户点「我已下车」
+    private var alightStage = AlightGuard.Stage.NONE
+    private var alightStageAt = 0L
+    private var alightAlarmCount = 0
+    private var alightAlarmNextAt = 0L
+    private var announceAtTarget = false    // 播报/文字已确认到达目标站
+    private val alightAlertAt = HashMap<Int, Long>()   // 每段首次响铃/强提醒的时刻（算反应时长）
+
+    private fun stampNode(kind: NodeLog.Kind, leg: Int, at: Long, src: NodeLog.Src) {
+        if (!::trip.isInitialized || nodeStartedAt <= 0L || at <= 0L) return
+        NodeLog.stamp(this, trip.id, nodeStartedAt, kind, leg, at, src)
+    }
+
+    /** 看板节点条当前建议打点的节点 */
+    private fun syncNodeCurrent() {
+        if (!::trip.isInitialized || finishing) { NodeLog.current.value = null; return }
+        NodeLog.current.value = when {
+            tail -> NodeLog.NodeRef(NodeLog.Kind.ARRIVE, 0)
+            riding -> NodeLog.NodeRef(NodeLog.Kind.ALIGHT, legIdx)
+            legIdx !in trip.legs.indices -> NodeLog.NodeRef(NodeLog.Kind.DEPART, 0)
+            trip.legs[legIdx].isMetroOnly() && stationAt == 0L -> NodeLog.NodeRef(NodeLog.Kind.ENTER, legIdx)
+            else -> NodeLog.NodeRef(NodeLog.Kind.BOARD, legIdx)
+        }
+    }
+
+    /** 换乘步行秒数：学到的优先，样本不足用手填分钟 */
+    private fun transferWalkSecOf(i: Int): Int {
+        val leg = trip.legs.getOrNull(i) ?: return 180
+        return Learn.transferWalkSec(this, trip.id, i) ?: (leg.transferWalkMin * 60)
+    }
+
+    /** 别的行程（出发建议对比用）没有自己的样本，只读本行程学到的 */
+    private fun transferWalkMin(t: Trip, i: Int): Int =
+        (if (t.id == trip.id) Learn.transferWalkSec(this, t.id, i)?.let { (it + 59) / 60 } else null)
+            ?: t.legs[i].transferWalkMin
+
+    /** 首页/通知动作：给当前节点打一个「现在」 */
+    fun stampCurrentNode() {
+        scope.launch(Dispatchers.Main) {
+            if (!::trip.isInitialized || finishing) return@launch
+            val now = System.currentTimeMillis()
+            when {
+                tail -> { stampNode(NodeLog.Kind.ARRIVE, 0, now, NodeLog.Src.MANUAL); userFinish() }
+                riding -> ackAlight()
+                trip.legs[legIdx].isMetroOnly() && stationAt == 0L -> {
+                    stationAt = now; stationByTap = false
+                    stampNode(NodeLog.Kind.ENTER, legIdx, now, NodeLog.Src.MANUAL)
+                    saveRun(deadlineAt); syncNodeCurrent(); kick()
+                }
+                else -> onBoarded(manual = true, at = now)
+            }
+            saveRun(deadlineAt)
+            syncNodeCurrent()
+        }
+    }
+
+    /** 长按节点条补录 / 修正：只改数据，不推进状态机 */
+    fun setNodeAt(kind: NodeLog.Kind, leg: Int, at: Long) {
+        scope.launch(Dispatchers.Main) {
+            if (!::trip.isInitialized) return@launch
+            stampNode(kind, leg, at, NodeLog.Src.BACKFILL)
+            saveRun(deadlineAt)
+        }
+    }
+
+    /** 5 秒内再点一次已记录节点：撤销这次人工打点（自动值会重新露出来） */
+    fun undoNodeIfFresh(ref: NodeLog.NodeRef) {
+        scope.launch(Dispatchers.Main) {
+            if (!::trip.isInitialized) return@launch
+            val cur = NodeLog.effective(NodeLog.raw(this@CommuteService, trip.id, nodeStartedAt))[ref]
+            if (cur != null && (cur.src == NodeLog.Src.MANUAL || cur.src == NodeLog.Src.BACKFILL) &&
+                System.currentTimeMillis() - cur.at <= 5_000L) {
+                NodeLog.removeLast(this@CommuteService, trip.id, nodeStartedAt, ref.kind, ref.leg)
+                saveRun(deadlineAt)
+                syncNodeCurrent()
+            }
+        }
+    }
+
+    /** 「我已下车」：停止响铃，记下车节点；还在车上就按本段到站继续 */
+    fun ackAlight() {
+        scope.launch(Dispatchers.Main) {
+            if (!::trip.isInitialized || alightAckedAt > 0L) return@launch
+            val now = System.currentTimeMillis()
+            alightAckedAt = now
+            alightStage = AlightGuard.Stage.NONE
+            alightStageAt = 0L; alightAlarmCount = 0; alightAlarmNextAt = 0L
+            AlarmBuzzer.stop()
+            if (riding) {
+                if (legIdx >= trip.legs.size - 1) {
+                    stampNode(NodeLog.Kind.ALIGHT, legIdx, now, NodeLog.Src.MANUAL)
+                    arrived = true
+                    endTrip("ack")
+                } else {
+                    markAlight(now, "user")
+                    setPower(Power.HIGH)
+                    advanceLeg(now)
+                }
+            } else {
+                stampNode(NodeLog.Kind.ALIGHT, legIdx, now, NodeLog.Src.MANUAL)
+            }
+            saveRun(deadlineAt)
+            syncNodeCurrent()
+        }
+    }
+
+    private fun resetAlightGuard() {
+        alightAckedAt = 0L
+        alightStage = AlightGuard.Stage.NONE
+        alightStageAt = 0L
+        alightAlarmCount = 0
+        alightAlarmNextAt = 0L
+        announceAtTarget = false
+        AlarmBuzzer.stop()
+    }
+
+    /** 提前多久进入「准备下车」：按学到的个人反应时长，夹在 60–240 秒 */
+    private fun alertLeadMs(leg: Int): Long = Learn.alertLeadMs(this, trip.id, leg)
+
+    /**
+     * 到站阶段提醒：换乘站与终点站同一套。
+     * T-2 只更新胶囊；T-1 提示音；到站响铃；过站长响。重复节奏由 AlightGuard 决定。
+     */
+    private fun fireAlight(stage: AlightGuard.Stage, leg: Int, at: Long, force: Boolean = false) {
+        if (!::trip.isInitialized || stage == AlightGuard.Stage.NONE) return
+        val now = System.currentTimeMillis()
+        if (alightStage == stage) {
+            if (stage == AlightGuard.Stage.T2) return
+            if (!force && now < alightAlarmNextAt) return
+        } else {
+            alightStage = stage
+            alightStageAt = at
+            alightAlarmCount = 0
+        }
+        if (stage != AlightGuard.Stage.T2 && !alightAlertAt.containsKey(leg)) alightAlertAt[leg] = at
+        val name = legAlightName(leg)
+        val metro = trip.legs.getOrNull(leg)?.isMetroOnly() ?: true
+        val title = AlightGuard.title(stage, name)
+        val text = AlightGuard.text(stage)
+        when (stage) {
+            AlightGuard.Stage.T2 -> LiveNotifier.alert(this, title, text, metro = metro, id = 1005)
+            AlightGuard.Stage.T1 -> {
+                LiveNotifier.alert(this, title, text, metro = metro, id = 1005)
+                AlarmBuzzer.beep(this)
+            }
+            AlightGuard.Stage.AT, AlightGuard.Stage.OVERSHOOT -> {
+                LiveNotifier.alert(this, title, text, metro = metro, id = if (stage == AlightGuard.Stage.AT) 1005 else 1007, ack = true)
+                val cap = AlightGuard.maxRings(stage)
+                if (alightAlarmCount < cap) {
+                    AlarmBuzzer.ring(this, long = stage == AlightGuard.Stage.OVERSHOOT)
+                    alightAlarmCount++
+                }
+            }
+            AlightGuard.Stage.NONE -> Unit
+        }
+        TraceLog.event("alight_stage", "stage" to stage.name, "leg" to leg, "rings" to alightAlarmCount)
+        alightAlarmNextAt = if (alightAlarmCount >= AlightGuard.maxRings(stage) && AlightGuard.shouldRing(stage))
+            now + 10 * 60_000L else now + AlightGuard.intervalMs(stage)
+    }
+
+    /** 结束结算：补算缺失节点，写入「最近行程」，清理进行中记录 */
+    private fun settleNodes(aborted: Boolean) {
+        if (!::trip.isInitialized || nodeStartedAt <= 0L) return
+        runCatching {
+            val anchors = NodeLog.Anchors(
+                startedAt = if (startedAt > 0L) startedAt else nodeStartedAt,
+                now = System.currentTimeMillis(),
+                boardEstimateSec = trip.legs.indices.firstNotNullOfOrNull { Learn.waitSec(this, trip.id, it) }
+                    ?: trip.boardEstimateSec,
+                alightEstimateSec = trip.alightEstimateSec,
+                transferWalkSec = trip.legs.indices.map { transferWalkSecOf(it).coerceAtLeast(60) },
+                rideSec = trip.legs.indices.map { (rideMs(it) / 1000).toInt() },
+                exitWalkSec = Learn.exitWalkSec(this, trip.id, trip.legs.lastIndex) ?: 180,
+                lastWalkSec = Learn.lastWalkSec(this, trip.id)
+                    ?: WalkLearn.durationMedian(this, trip.id, "last") ?: 480,
+            )
+            val nodes = NodeLog.resolve(trip, NodeLog.raw(this, trip.id, nodeStartedAt), anchors, aborted)
+            learnNodes(nodes, aborted)
+            NodeLog.saveLastRun(this, trip, nodes)
+            TraceLog.event("nodes_settled", "n" to nodes.size, "aborted" to aborted)
+        }
+        NodeLog.clearActive(this)
+    }
+
+    /**
+     * 从结算后的时间轴学节点时长。只用实测 / 刷卡 / 自动的节点；
+     * 推算与补录一律不进样本，避免自我强化偏差。测试行程、中途上车、恢复的行程都不学。
+     */
+    private fun learnNodes(nodes: List<NodeLog.Stamp>, aborted: Boolean) {
+        if (aborted || restored || manualRun) return
+        val eff = NodeLog.effective(nodes)
+        fun real(kind: NodeLog.Kind, leg: Int): Long? =
+            eff[NodeLog.NodeRef(kind, leg)]
+                ?.takeIf { it.src != NodeLog.Src.ESTIMATED && it.src != NodeLog.Src.BACKFILL }?.at
+        fun sec(from: Long, to: Long) = ((to - from) / 1000).toInt()
+
+        trip.legs.indices.forEach { i ->
+            val enter = real(NodeLog.Kind.ENTER, i)
+            val board = real(NodeLog.Kind.BOARD, i)
+            val alight = real(NodeLog.Kind.ALIGHT, i)
+            val exit = real(NodeLog.Kind.EXIT, i)
+            if (i != joinLeg) {
+                if (enter != null && board != null && board > enter) Learn.recordNode(this, Learn.Metric.WAIT, "${trip.id}#$i", sec(enter, board))
+                if (alight != null && exit != null && exit > alight) Learn.recordNode(this, Learn.Metric.EXIT_WALK, "${trip.id}#$i", sec(alight, exit))
+                alightAlertAt[i]?.let { a -> if (alight != null && alight > a) Learn.recordNode(this, Learn.Metric.REACT, "${trip.id}#$i", sec(a, alight)) }
+            }
+            if (i > 0) {
+                val prev = real(NodeLog.Kind.ALIGHT, i - 1)
+                if (prev != null && board != null && board > prev) Learn.recordNode(this, Learn.Metric.TRANSFER, "${trip.id}#$i", sec(prev, board))
+            }
+        }
+        val last = trip.legs.lastIndex
+        val arrive = real(NodeLog.Kind.ARRIVE, 0)
+        val anchor = if (trip.legs.getOrNull(last)?.isMetroOnly() == true)
+            real(NodeLog.Kind.EXIT, last) else real(NodeLog.Kind.ALIGHT, last)
+        if (arrive != null && anchor != null && arrive > anchor) Learn.recordNode(this, Learn.Metric.LAST_WALK, trip.id, sec(anchor, arrive))
+        alightAlertAt.clear()
+    }
     private val fenceFixes = ArrayDeque<android.location.Location>()
     private var pendingBoardAt = 0L
     private var pendingBoardLoc: Location? = null
@@ -499,12 +731,15 @@ class CommuteService : Service() {
         metroAnchorIdx = b.metroAnchorIdx; metroAnchorAt = b.metroAnchorAt; nearSince = b.nearSince; alightLeg = b.alightLeg
         arriveAgainAt = b.arriveAgainAt; overshootAlerted = b.overshootAlerted
         alertedKey = null; speeds.clear(); routeHits.clear()
+        NodeLog.removeLast(this, trip.id, nodeStartedAt, NodeLog.Kind.BOARD, legIdx)
         TraceLog.event("board_undo", "leg" to legIdx)
         Diag.mark(this, "撤销了手点的「已上车」，回到第 ${legIdx + 1} 段")
         loop?.cancel()
         deadlineAt = b.deadlineAt
         loop = scope.launch { runLoop(b.deadlineAt) }
         saveRun(b.deadlineAt)
+        resetAlightGuard()
+        syncNodeCurrent()
     }
 
     /** 撤销窗口过了：手点的地铁上车时刻才算数 */
@@ -526,6 +761,9 @@ class CommuteService : Service() {
         val now = at
         TraceLog.event("boarded", "leg" to legIdx, "manual" to manual, "at" to at, "riding" to riding)
         if (riding) return                // 已经在这一段的车上
+        stampNode(NodeLog.Kind.BOARD, legIdx, at,
+            if (manual) NodeLog.Src.MANUAL else if (boardingByTap) NodeLog.Src.TAP else NodeLog.Src.AUTO)
+        resetAlightGuard()
         if (manual) {
             boardSnap = BoardSnap(legIdx, boardedAt, riding, stationAt, stationByTap, alightAt, rideLearned, arriveAnchorAt, arriveAlertedAt,
                 pendingBoardAt, pendingBoardLoc, ridingCand, metroAnchorIdx, metroAnchorAt, nearSince, alightLeg, arriveAgainAt, overshootAlerted, deadlineAt)
@@ -558,6 +796,7 @@ class CommuteService : Service() {
         deadlineAt = dl   // 先同步更新，紧接着的 kick()/saveRun() 才不会用旧截止时间
         loop = scope.launch { runLoop(dl) }
         saveRun(dl)
+        syncNodeCurrent()
     }
 
     /** 本段到站确认：转入下一段的等车状态（最后一段由 finish 处理，不走这里） */
@@ -586,6 +825,8 @@ class CommuteService : Service() {
         deadlineAt = dl
         loop = scope.launch { runLoop(dl) }
         saveRun(dl)
+        resetAlightGuard()
+        syncNodeCurrent()
         TraceLog.event("leg_advance", "leg" to legIdx)
     }
 
@@ -754,7 +995,7 @@ class CommuteService : Service() {
                 async {
                     val walk = dists[i]?.let { Decision.walkSeconds(it) }
                         // 站里没定位：按换乘步行时间减去下车后已走的时间
-                        ?: if (alightAt > 0) (leg.transferWalkMin * 60 - ((now - alightAt) / 1000).toInt()).coerceAtLeast(0) else 0
+                        ?: if (alightAt > 0) (transferWalkSecOf(legIdx) - ((now - alightAt) / 1000).toInt()).coerceAtLeast(0) else 0
                     when (c.type) {
                         Candidate.Type.BUS -> {
                             val rt = runCatching {
@@ -951,7 +1192,7 @@ class CommuteService : Service() {
         }
         if (busArr.isEmpty()) return null
         val walk = options.minOfOrNull { it.walkSec } ?: 0
-        val plans = Decision.planDeparture(walk, trains, (rideMs(0) / 1000).toInt(), next.transferWalkMin * 60, busArr)
+        val plans = Decision.planDeparture(walk, trains, (rideMs(0) / 1000).toInt(), transferWalkSecOf(1), busArr)
         return plans.ifEmpty { null }
     }
 
@@ -986,7 +1227,7 @@ class CommuteService : Service() {
         }
         // 在公司多待一会：胶囊别在出发前就到期收起
         val need = now + p.leaveSec * 1000L +
-            trip.legs.indices.sumOf { Learn.ride(this, trip, it, metroRideSec[it]).minutes + trip.legs[it].transferWalkMin + 10 } * 60_000L
+            trip.legs.indices.sumOf { Learn.ride(this, trip, it, metroRideSec[it]).minutes + transferWalkMin(trip, it) + 10 } * 60_000L
         if (need > deadlineAt) deadlineAt = need
         setPower(if (p.leaveSec < 300) Power.HIGH else Power.LOW)
         return when {
@@ -1167,39 +1408,57 @@ class CommuteService : Service() {
         // 公交按沿线距离估过到站时间：取两者晚的，免得时间估短了提前结束
         val eta = if (!metro && busEtaAt > 0) maxOf(timeEta, busEtaAt) else timeEta
         // 公交站距常只有 300–500 米，700 米会提前两三站（实测）：公交收到 350 米；地铁仍 700 米
-        val freshLoc = loc != null && now - loc.time < 120_000 && loc.accuracy < 200
         val near = d != null && (loc?.accuracy ?: 9999f) < 400 &&
             (if (metro) d <= 700 else d <= 350 + minOf(loc?.accuracy ?: 0f, 50f))
         // 公交有新鲜沿线投影：过了倒数第二站（只剩 1 站）且离站 ≤ 600 米才算快到
         val busLast = !metro && bs != null && bs.stopsLeft <= 1 && d != null && d <= 600
-        // 地铁段完全按默认值推算时，乘车时间不可靠，先不按时间提醒下车
-        val etaKnown = !metro ||
-            Learn.ride(this, trip, legIdx, metroRideSec[legIdx]).source != Learn.Ride.Source.DEFAULT
         // 按时间提醒「快到了」：有定位且离下车站 1.5 公里以上时不提醒（地铁里网络定位误差大，放宽精度）
         // 公交有新鲜定位时只信位置，不按倒计时（倒计时只在没定位时兜底）
-        val timeUp = etaKnown && now >= eta - 90_000 && !freshFar &&
-            (if (metro) (d == null || d < 1_500 + (loc?.accuracy ?: 0f)) else !freshLoc)
-        if (arriveAlertedAt == 0L && (near || busLast || timeUp)) {
-            TraceLog.event("arrive_alert", "d" to d?.toInt(), "near" to near, "busLast" to busLast, "timeUp" to timeUp)
-            arriveAlertedAt = now
-            saveRun(deadlineAt)   // 立刻存：实测被杀重启 5 次，每次都重弹「快到了」
-            LiveNotifier.alert(this, "即将到达「$name」", "请准备下车", metro = metro, id = 1005)
+        val etaKnown = !metro ||
+            Learn.ride(this, trip, legIdx, metroRideSec[legIdx]).source != Learn.Ride.Source.DEFAULT
+        // 到站阶段：换乘站与终点站共用。已确认「我已下车」后不再提醒
+        val passed = when {
+            metro && mrRide != null -> metroProgress(mrRide, rideMs(legIdx).coerceAtLeast(60_000L), now).first
+            br != null -> busMaxSeg
+            else -> 0
         }
-        // 第一次提醒常被忽略：临近到站再确认一次（每段一次）
-        if (arriveAlertedAt > 0 && arriveAgainAt == 0L && now >= eta - 25_000) {
-            arriveAgainAt = now
-            saveRun(deadlineAt)
-            LiveNotifier.alert(this, "即将到达「$name」", "请准备下车", metro = metro, id = 1005)
+        val remaining = when {
+            metro && mrRide != null -> (mrRide.hops - passed).coerceAtLeast(0)
+            br != null -> (br.size - 1 - busMaxSeg).coerceAtLeast(0)
+            else -> -1
         }
-        // 过站：提醒过了、早过了预计到站时间，位置也不在下车站附近 → 已经坐过站
-        val overshoot = !overshootAlerted && arriveAlertedAt > 0 && (
+        val atTarget = near || busLast || announceAtTarget ||
+            (etaKnown && now >= eta - 30_000L && !freshFar)
+        val overshoot = !overshootAlerted && (arriveAlertedAt > 0L || alightStage != AlightGuard.Stage.NONE) && (
             if (metro) now > eta + 5 * 60_000L && !(d != null && d <= 800)
             else now > eta + 3 * 60_000L && !(d != null && d <= 500))
-        if (overshoot) {
+        val st = AlightGuard.stage(AlightGuard.Input(
+            remaining = remaining,
+            atStation = atTarget,
+            etaKnown = etaKnown,
+            now = now, eta = eta,
+            leadMs = alertLeadMs(legIdx),
+            acked = alightAckedAt > 0L,
+            overshoot = overshoot,
+            far = freshFar,
+        ))
+        if (st != AlightGuard.Stage.NONE) {
+            if (arriveAlertedAt == 0L) {
+                arriveAlertedAt = now
+                saveRun(deadlineAt)   // 立刻存：实测被杀重启 5 次，每次都重弹「快到了」
+            }
+            if (st != alightStage || now >= alightAlarmNextAt) {
+                TraceLog.event("arrive_alert", "stage" to st.name, "left" to remaining, "d" to d?.toInt(),
+                    "near" to near, "busLast" to busLast)
+                fireAlight(st, legIdx, now)
+            }
+        }
+        // 过站：提醒过了、早过了预计到站时间，位置也不在下车站附近 → 已经坐过站
+        if (overshoot && !overshootAlerted) {
             overshootAlerted = true
             saveRun(deadlineAt)
             TraceLog.event("overshoot", "leg" to legIdx, "d" to d?.toInt(), "eta" to eta)
-            LiveNotifier.alert(this, "「$name」已过站", "请下车返回", metro = metro, id = 1007)
+            fireAlight(AlightGuard.Stage.OVERSHOOT, legIdx, now, force = true)
         }
         // 结束：到了下车站 150 米内；或提醒后过了 5 分钟且超过预计到站时间（地铁 3 分钟、公交 10 分钟）。
         // 新鲜定位显示离下车站 1.5 公里以上时绝不按时间结束（人还在车上，只是车慢）
@@ -1221,6 +1480,7 @@ class CommuteService : Service() {
                 if (min >= 3 && min in plan / 2..plan * 2 + 5) learnRide(legIdx, min)
             }
             if (legIdx >= trip.legs.size - 1) {
+                stampNode(NodeLog.Kind.ALIGHT, legIdx, now, NodeLog.Src.AUTO)
                 arrived = true
                 endTrip("ride_" + (if (byLoc) "loc" else "time")); return 30_000L
             }
@@ -1470,6 +1730,7 @@ class CommuteService : Service() {
                 Diag.mark(this, "已经${if (l == Places.Label.HOME) "到家" else "到公司"}，行程结束")
                 arrived = true
                 if (metroRideOn) runCatching { endMetroRide() }
+                stampNode(NodeLog.Kind.ARRIVE, 0, loc.time, NodeLog.Src.AUTO)
                 placeVotes(); finish()   // 已在目的地，无需记录末段步行
             }
         }
@@ -1615,7 +1876,9 @@ class CommuteService : Service() {
             .putBoolean("overshoot", overshootAlerted).putInt("alightLeg", alightLeg).putLong("fpEtaAt", fpEtaAt)
             .putInt("sv", 2)
             .putLong("pendBoard", pendingBoardAt).putBoolean("boardDone", boardCommitted)
-            .putString("pendLoc", pendingBoardLoc?.let { "${it.latitude},${it.longitude}" } ?: "").apply()
+            .putString("pendLoc", pendingBoardLoc?.let { "${it.latitude},${it.longitude}" } ?: "")
+            .putLong("nodeStart", nodeStartedAt)
+            .apply()
     }
 
     private fun clearRun() = runPrefs().edit().clear().apply()
@@ -1662,11 +1925,14 @@ class CommuteService : Service() {
         overshootAlerted = p.getBoolean("overshoot", false); alightLeg = p.getInt("alightLeg", -1)
         fpEtaAt = p.getLong("fpEtaAt", 0L)
         busMaxSeg = p.getInt("busSeg", -1); busSeg = busMaxSeg   // 站点列表不存，恢复后重新取
+        nodeStartedAt = p.getLong("nodeStart", 0L)
+        resetAlightGuard()
         restored = true
         val rc = p.getString("ridingCand", "") ?: ""
         ridingCand = t.legs[leg].candidates.firstOrNull { "${it.name}|${it.stopName}" == rc }
             ?: if (riding) t.legs[leg].candidates.firstOrNull() else null
         Diag.mark(this, "已恢复中断前的行程：第 ${leg + 1} 段${if (riding) "（车上）" else ""}")
+        syncNodeCurrent()
         return dl
     }
 
@@ -1900,6 +2166,9 @@ class CommuteService : Service() {
                     while (legIdx < target) advanceLeg(at)
                 }
                 stationAt = at; stationByTap = true   // 刷卡时刻就是进站时刻，按它之后第一班车算上车
+                stampNode(NodeLog.Kind.ENTER, legIdx, at, NodeLog.Src.TAP)
+                resetAlightGuard()
+                syncNodeCurrent()
                 Diag.mark(this, "刷卡进站，切到地铁段")
                 kick()
             }
@@ -1910,6 +2179,7 @@ class CommuteService : Service() {
                 when {
                     // 本段地铁出站 = 到站：最后一段结束，中间段转下一段（和终点站同一套流程）
                     cur.isMetroOnly() && (riding || stationAt > 0) -> {
+                        stampNode(NodeLog.Kind.EXIT, legIdx, at, NodeLog.Src.TAP)
                         if (riding) markAlight(at)
                         if (legIdx == last) {
                             Diag.mark(this, "刷卡出站，行程结束")
@@ -1921,7 +2191,10 @@ class CommuteService : Service() {
                         }
                         return
                     }
-                    prevMetro && alightAt == 0L -> markAlight(at)
+                    prevMetro && alightAt == 0L -> {
+                        stampNode(NodeLog.Kind.EXIT, legIdx - 1, at, NodeLog.Src.TAP)
+                        markAlight(at)
+                    }
                 }
                 kick()
             }
@@ -1993,9 +2266,14 @@ class CommuteService : Service() {
                 arriveAnchorAt = at
                 TraceLog.event("arrive_anchor", "leg" to metroIdx, "expect" to (at + lastHopMs(metroIdx)))
                 Diag.mark(this, "快到${alightName(metroIdx)}，按播报校准")
-                if (metroIdx == legIdx && arriveAlertedAt == 0L) {
-                    arriveAlertedAt = System.currentTimeMillis()
-                    LiveNotifier.alert(this, "即将到达「${legAlightName(legIdx)}」", "请准备下车", metro = true, id = 1005)
+                val atTarget = Regex("到了|已到站|到站了|即将到达|即将到站").containsMatchIn(text)
+                if (metroIdx == legIdx) {
+                    if (atTarget) {
+                        announceAtTarget = true
+                        fireAlight(AlightGuard.Stage.AT, metroIdx, at, force = true)
+                    } else if (alightStage == AlightGuard.Stage.NONE) {
+                        fireAlight(AlightGuard.Stage.T1, metroIdx, at, force = true)
+                    }
                 }
                 saveRun(deadlineAt)
                 kick()
@@ -2024,14 +2302,16 @@ class CommuteService : Service() {
     }
 
     /** 最后一段：从下车 / 出站（尾段记录开始）到在终点停下来的那一刻 */
-    private fun learnLastWalk(lat: Double, lng: Double) {
-        if (restored) return
+    private fun learnLastWalk(lat: Double, lng: Double): Long? {
+        if (restored) return null
         val fixes = tailFixes.map { WalkLearn.Fix(it.time, it.latitude, it.longitude, it.accuracy) }
-        val arrive = WalkLearn.arriveAt(fixes, lat, lng) ?: return
+        val arrive = WalkLearn.arriveAt(fixes, lat, lng) ?: return null
+        stampNode(NodeLog.Kind.ARRIVE, 0, arrive, NodeLog.Src.AUTO)
         val wins = TraceLog.recentWindows()
-        val s = WalkLearn.build(LocalDate.now().toEpochDay(), "last", tailStart, arrive, fixes, wins, partial = false) ?: return
+        val s = WalkLearn.build(LocalDate.now().toEpochDay(), "last", tailStart, arrive, fixes, wins, partial = false) ?: return arrive
         WalkLearn.record(this, trip.id, s)
         TraceLog.event("walk_learn", "kind" to "last", "dur" to s.durSec, "path" to s.pathM, "walk" to s.walkSec, "spd" to s.speed)
+        return arrive
     }
 
     // ---------- 地铁基站：学地下专网区号判进出站，顺便记沿途基站序列（只存本机） ----------
@@ -2169,6 +2449,7 @@ class CommuteService : Service() {
                 when {
                     riding && cur.isMetroOnly() && legIdx == last -> {
                         endMetroRide()
+                        stampNode(NodeLog.Kind.ALIGHT, legIdx, System.currentTimeMillis(), NodeLog.Src.AUTO)
                         Diag.mark(this, "离开地铁里的基站，判断已出站，行程结束")
                         arrived = true
                         endTrip("cell_exit")
@@ -2212,6 +2493,10 @@ class CommuteService : Service() {
         if (alightLeg == legIdx) return
         alightLeg = legIdx
         alightAt = at; stepSensor(false)
+        stampNode(NodeLog.Kind.ALIGHT, legIdx, at,
+            if (by == "tap") NodeLog.Src.TAP else if (by == "user") NodeLog.Src.MANUAL else NodeLog.Src.AUTO)
+        resetAlightGuard()
+        syncNodeCurrent()
         TraceLog.event("alight_detect", "leg" to legIdx, "by" to by, "at" to at)
         if (!rideLearned && !restored && boardedAt > 0) {
             rideLearned = true
@@ -2230,14 +2515,17 @@ class CommuteService : Service() {
     private fun finish() {
         holdCpu(false)
         WakeAlarm.cancel(this)
+        AlarmBuzzer.stop()
         if (metroRideOn) runCatching { endMetroRide() }
         if (busMovingOn) runCatching { busMovingOn = false; tacLearner?.let { it.endSurface(); MetroCells.save(this, it) } }
         TraceLog.onCell = null
         if (!finishing && !tail) placeVotes()
         if (tail && !finishing) TraceLog.event("tail_end", "after" to (System.currentTimeMillis() - tailStart) / 1000)
+        settleNodes(aborted = !arrived && !tail)
         TraceLog.event("finish", "leg" to legIdx, "riding" to riding)
         TraceLog.stop()
         finishing = true
+        NodeLog.current.value = null
         clearRun()
         try { lm?.removeUpdates(listener) } catch (_: Exception) { }
         stepSensor(false)
@@ -2273,6 +2561,8 @@ class ActionReceiver : BroadcastReceiver() {
         const val ACTION_BOARDED = "com.busnotice.commute.BOARDED"
         const val ACTION_STOP = "com.busnotice.commute.STOP"
         const val ACTION_DISMISSED = "com.busnotice.commute.DISMISSED"
+        const val ACTION_ALIGHT_ACK = "com.busnotice.commute.ALIGHT_ACK"
+        const val ACTION_STAMP = "com.busnotice.commute.STAMP"
     }
 
     override fun onReceive(ctx: Context, intent: Intent) {
@@ -2284,6 +2574,8 @@ class ActionReceiver : BroadcastReceiver() {
         }
         when {
             intent.action == ACTION_BOARDED && svc != null -> svc.onBoarded()
+            intent.action == ACTION_ALIGHT_ACK && svc != null -> svc.ackAlight()
+            intent.action == ACTION_STAMP && svc != null -> svc.stampCurrentNode()
             intent.action == ACTION_DISMISSED -> {
                 // 被划掉（或被系统移除）：行程照常进行，胶囊先隐藏，等下一次提醒或打开 App 再出来
                 Diag.mark(ctx, "胶囊被移除（划掉或系统移除），行程继续在后台")

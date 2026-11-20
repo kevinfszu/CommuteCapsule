@@ -108,4 +108,11 @@ object WalkLearn {
         }.mapNotNull { it.speed }
         return if (all.size >= 3) median(all) else null
     }
+
+    /** 某趟首/末段步行的中位时长（秒），至少 3 次；只用于节点补算 */
+    fun durationMedian(ctx: Context, tripId: String, kind: String): Int? {
+        val xs = samples(ctx, tripId, kind).filter { !it.partial }.map { it.durSec.toDouble() }
+        return if (xs.size >= 3) median(xs)?.toInt() else null
+    }
+}
 }

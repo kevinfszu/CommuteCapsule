@@ -159,11 +159,11 @@ object LiveNotifier {
     }
 
     /** 需要马上出发 / 换乘紧张时，额外弹一条横幅并震动 */
-    fun alert(ctx: Context, title: String, text: String, metro: Boolean = false, id: Int = ALERT_ID) {
+    fun alert(ctx: Context, title: String, text: String, metro: Boolean = false, id: Int = ALERT_ID, ack: Boolean = false) {
         unhide(ctx)
         val popped = pop(ctx, title, text)
         TraceLog.event("alert", "title" to title, "text" to text, "pop" to popped)
-        val n = NotificationCompat.Builder(ctx, CHANNEL_ALERT)
+        val b = NotificationCompat.Builder(ctx, CHANNEL_ALERT)
             .setSmallIcon(if (metro) R.drawable.ic_metro else R.drawable.ic_bus)
             .setColor(if (metro) GREEN else BLUE)
             .setContentTitle(title)
@@ -175,7 +175,8 @@ object LiveNotifier {
             .setContentIntent(openApp(ctx))
             // 已经用流体云卡片提醒过了：通知栏这条只留底，不再响/震第二次
             .setSilent(popped)
-            .build()
+        if (ack) b.addAction(0, "我已下车", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_ACK))
+        val n = b.build()
         try {
             NotificationManagerCompat.from(ctx).notify(id, n)
         } catch (_: SecurityException) { }
@@ -257,8 +258,9 @@ object LiveNotifier {
             // 划走不等于结束：先隐藏，下次提醒再出来；要结束请点「结束/关闭」
             .setDeleteIntent(actionIntent(ctx, ActionReceiver.ACTION_DISMISSED))
             .apply {
-                if (CommuteService.undoActive()) addAction(0, "撤销上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
-                else if (!v.riding) addAction(0, "确认上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
+                if (v.riding) addAction(0, "我已下车", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_ACK))
+                else if (CommuteService.undoActive()) addAction(0, "撤销上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
+                else addAction(0, "记：上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
             }
             .addAction(0, if (v.riding) "结束行程" else "关闭提醒", actionIntent(ctx, ActionReceiver.ACTION_STOP))
 

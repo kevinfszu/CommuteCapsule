@@ -200,6 +200,9 @@ data class Trip(
     val leaveLat: Double = Double.NaN,
     val leaveLng: Double = Double.NaN,
     val leaveRadiusM: Int = 0,
+    // 没人工打卡时的预估：地铁上车 = 进站 + n 秒；终点下车 = 出站 - n 秒
+    val boardEstimateSec: Int = 180,
+    val alightEstimateSec: Int = 120,
 ) {
     fun leaveMode() = leaveRadiusM > 0 && !leaveLat.isNaN() && !leaveLng.isNaN()
 
@@ -230,6 +233,7 @@ data class Trip(
         .put("startMinute", startMinute).put("endMinute", endMinute)
         .put("warmupMin", warmupMin).put("enabled", enabled)
         .put("leaveRadiusM", leaveRadiusM)
+        .put("boardEstimateSec", boardEstimateSec).put("alightEstimateSec", alightEstimateSec)
         .apply { if (!leaveLat.isNaN() && !leaveLng.isNaN()) put("leaveLat", leaveLat).put("leaveLng", leaveLng) }
 
     companion object {
@@ -244,6 +248,8 @@ data class Trip(
                 warmupMin = o.optInt("warmupMin", 10), enabled = o.optBoolean("enabled", true),
                 leaveLat = o.optDouble("leaveLat"), leaveLng = o.optDouble("leaveLng"),
                 leaveRadiusM = o.optInt("leaveRadiusM", 0),
+                boardEstimateSec = o.optInt("boardEstimateSec", 180).coerceIn(0, 1800),
+                alightEstimateSec = o.optInt("alightEstimateSec", 120).coerceIn(0, 1800),
             )
         }
     }

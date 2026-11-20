@@ -87,6 +87,7 @@ import com.busnotice.commute.CommuteService
 import com.busnotice.commute.Learn
 import com.busnotice.commute.LiveState
 import com.busnotice.commute.Loc
+import com.busnotice.commute.NodeLog
 import com.busnotice.commute.Places
 import com.busnotice.commute.Reverse
 import com.busnotice.commute.Scheduler
@@ -178,6 +179,9 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
     // 点「测试」或行程开始后，实时看板插到列表顶部：滚回顶部让看板完整露出来，不被挤到上面
     val liveId = live?.tripId
     LaunchedEffect(liveId) { if (liveId != null) listState.animateScrollToItem(0) }
+    // 结束后的节点时间轴：回到前台或刚结束一趟时刷新
+    var lastRun by remember { mutableStateOf<Pair<Trip, List<NodeLog.Stamp>>?>(null) }
+    LaunchedEffect(resumeTick, liveId) { lastRun = NodeLog.lastRun(ctx) }
 
     Box(Modifier.fillMaxSize()) {
         GradientBackground(dark)
@@ -279,6 +283,9 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit) {
                     // 服务 30 秒内还没起来就不再显示占位
                     val name = board?.tripName ?: trips.firstOrNull { it.id == pendingTrip }?.name ?: "通勤"
                     item(key = "live") { RestoringBoard(name, dark) }
+                }
+                if (!demoOn && board == null && pendingTrip == null) {
+                    lastRun?.let { (t, ns) -> item(key = "last-run") { RecentRunCard(t, ns, dark) } }
                 }
                 // 缺必需设置时放上面显眼处，全齐了就放到列表最后
                 val permUrgent = perms.any { !it.granted && !it.optional }

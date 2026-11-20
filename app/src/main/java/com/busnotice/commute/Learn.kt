@@ -186,4 +186,59 @@ object Learn {
         val p = ctx.getSharedPreferences(METRO, Context.MODE_PRIVATE)
         p.edit().remove(metroKey(c, true)).remove(metroKey(c, false)).apply()
     }
+
+    // ---------- 节点派生时长：候车 / 换乘步行 / 站内步行 / 末段步行 / 反应时长 ----------
+    // 只用「实测 / 刷卡 / 自动」节点；推算与补录由调用方排除。按天去重，中位数。
+    private const val NODES = "learn_nodes"
+
+    enum class Metric(val minSamples: Int, val range: IntRange) {
+        WAIT(5, 0..1200),        // 进站 → 上车
+        TRANSFER(3, 0..1200),    // 下车 → 下一段上车
+        EXIT_WALK(5, 0..900),    // 下车 → 出站
+        LAST_WALK(3, 60..2400),  // 出站/下车 → 到达
+        REACT(3, 10..300),       // 首次提醒 → 确认下车
+    }
+
+    private fun nodeKey(m: Metric, scope: String) = "${m.name}:$scope"
+
+    private fun nodeEntries(ctx: Context, m: Metric, scope: String): List<Pair<Long, Int>> =
+        (ctx.getSharedPreferences(NODES, Context.MODE_PRIVATE).getString(nodeKey(m, scope), "") ?: "")
+            .split(',').mapNotNull { e ->
+                val (d, s) = e.split(':').takeIf { it.size == 2 } ?: return@mapNotNull null
+                val day = d.toLongOrNull() ?: return@mapNotNull null
+                val sec = s.toIntOrNull() ?: return@mapNotNull null
+                day to sec
+            }
+
+    /** 同一天同一指标只留一条，避免一天跑两次把中位数拉偏 */
+    fun recordNode(ctx: Context, metric: Metric, scope: String, sec: Int) {
+        if (sec !in metric.range) return
+        val day = java.time.LocalDate.now().toEpochDay()
+        val p = ctx.getSharedPreferences(NODES, Context.MODE_PRIVATE)
+        val list = nodeEntries(ctx, metric, scope)
+        if (list.any { it.first == day }) return
+        val out = (list + (day to sec)).takeLast(KEEP)
+        p.edit().putString(nodeKey(metric, scope), out.joinToString(",") { "${it.first}:${it.second}" }).apply()
+    }
+
+    fun nodeSec(ctx: Context, metric: Metric, scope: String): Int? {
+        val l = nodeEntries(ctx, metric, scope).map { it.second }.filter { it in metric.range }
+        return if (l.size < metric.minSamples) null else l.sorted()[l.size / 2]
+    }
+
+    fun waitSec(ctx: Context, tripId: String, legIdx: Int) = nodeSec(ctx, Metric.WAIT, "$tripId#$legIdx")
+
+    fun transferWalkSec(ctx: Context, tripId: String, legIdx: Int) =
+        nodeSec(ctx, Metric.TRANSFER, "$tripId#$legIdx")
+
+    fun exitWalkSec(ctx: Context, tripId: String, legIdx: Int) =
+        nodeSec(ctx, Metric.EXIT_WALK, "$tripId#$legIdx")
+
+    fun lastWalkSec(ctx: Context, tripId: String) = nodeSec(ctx, Metric.LAST_WALK, tripId)
+
+    fun reactSec(ctx: Context, tripId: String, legIdx: Int) = nodeSec(ctx, Metric.REACT, "$tripId#$legIdx")
+
+    /** T-1 提前量：按个人反应时长，夹在 60–240 秒；样本不足用 90 秒 */
+    fun alertLeadMs(ctx: Context, tripId: String, legIdx: Int): Long =
+        ((reactSec(ctx, tripId, legIdx) ?: 90).coerceIn(60, 240)) * 1000L
 }

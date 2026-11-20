@@ -35,4 +35,29 @@ class TapPopupTest {
         "快跑 · 某路 某路 3 分钟到站，步行要 3 分钟，有点悬 1 分钟前 消费成功 本次消费：3.60 元 3 分钟前 2 19 分钟前 已激活VPN"))
     @Test fun staleMinutesTooOld() = assertNull(TapPopup.staleMinutes("交通卡 已出站 12分钟前 [表情]某群 刚刚"))
     @Test fun staleMinutesFresh() = assertNull(TapPopup.staleMinutes("消费成功 本次消费：0.80 元 刚刚"))
+
+    // 岭南通 / 羊城通：记录里带绝对钟点，10 分钟内才算新的
+    private fun today(h: Int, m: Int): Long = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, h)
+        set(java.util.Calendar.MINUTE, m)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }.timeInMillis
+
+    @Test fun lingnanEnter() {
+        val h = TapPopup.read("岭南通·羊城通 07:15 行程中", today(7, 18))
+        assertEquals(Kind.ENTER, h?.kind)
+        assertEquals(today(7, 15), h?.at)
+    }
+
+    @Test fun lingnanPay() {
+        val h = TapPopup.read("岭南通·羊城通 08:06 刷卡完成，交易金额：5.60元", today(8, 7))
+        assertEquals(Kind.TAP, h?.kind)
+        assertEquals("TAP:5.60:08:06", h?.sig)
+        assertEquals(today(8, 6), h?.at)
+    }
+
+    // 通知栏残留的旧记录：钟点差得远，不能再当成一次新刷卡
+    @Test fun lingnanOldClockIgnored() =
+        assertNull(TapPopup.read("岭南通·羊城通 08:06 刷卡完成，交易金额：5.60元", today(9, 30)))
 }

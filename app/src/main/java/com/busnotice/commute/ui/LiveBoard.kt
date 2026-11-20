@@ -1,7 +1,5 @@
 package com.busnotice.commute.ui
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,6 +10,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +29,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -49,6 +56,7 @@ import androidx.compose.ui.unit.sp
 import com.busnotice.commute.Candidate
 import com.busnotice.commute.CommuteService
 import com.busnotice.commute.LiveSnapshot
+import com.busnotice.commute.NodeLog
 import com.busnotice.commute.Trip
 
 /** 线路名缩短：纯数字线路（如「23路」「2号线」）只留数字，否则原样 */
@@ -155,6 +163,20 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
                     style = TextStyle(shadow = glow, lineHeight = 52.sp), maxLines = 2,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 12.dp))
             }
+        }
+
+        // 节点时间轴：点当前节点记「现在」，长按任意节点补录；演示回放不显示
+        if (s.tripId != com.busnotice.commute.DemoPlayer.TRIP_ID) {
+            val nodes by NodeLog.flow.collectAsState()
+            val curNode by NodeLog.current.collectAsState()
+            NodeTimeline(
+                trip = trip, nodes = nodes, current = curNode, editable = true, dark = true,
+                onTap = { ref ->
+                    if (ref == curNode) CommuteService.instance?.stampCurrentNode()
+                    else CommuteService.instance?.undoNodeIfFresh(ref)
+                },
+                onLongPress = { ref, at -> CommuteService.instance?.setNodeAt(ref.kind, ref.leg, at) },
+            )
         }
 
         // 详情：「下一站 XX」里的站名标黄
@@ -280,4 +302,130 @@ private fun StopDots(passed: Int, total: Int, from: String? = null, curName: Str
             }
         }
     }
+}
+
+/** 一条节点时间轴：点当前节点记「现在」，长按任意节点打开时间滚轮补录 */
+@Composable
+fun NodeTimeline(
+    trip: Trip?,
+    nodes: List<NodeLog.Stamp>,
+    current: NodeLog.NodeRef?,
+    editable: Boolean,
+    dark: Boolean,
+    onTap: (NodeLog.NodeRef) -> Unit,
+    onLongPress: (NodeLog.NodeRef, Long) -> Unit,
+) {
+    if (trip == null) return
+    val eff = remember(nodes) { NodeLog.effective(nodes) }
+    val refs = remember(trip) { NodeLog.timeline(trip) }
+    var editing by remember { mutableStateOf<Pair<NodeLog.NodeRef, Int>?>(null) }
+    val ink = Fuse.ink(dark)
+    val chipBg = if (dark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
+
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        refs.forEach { ref ->
+            val st = eff[ref]
+            val isCur = current == ref
+            val dup = refs.count { it.kind == ref.kind } > 1
+            val label = NodeLog.label(ref.kind) + if (dup && ref.kind in listOf(NodeLog.Kind.ENTER, NodeLog.Kind.BOARD, NodeLog.Kind.ALIGHT, NodeLog.Kind.EXIT)) " ${ref.leg + 1}" else ""
+            val estimated = st?.src == NodeLog.Src.ESTIMATED
+            val timeColor = when {
+                isCur -> Fuse.Yellow
+                st == null -> ink.copy(alpha = 0.35f)
+                st.src == NodeLog.Src.TAP -> Fuse.BusGreen
+                st.src == NodeLog.Src.ESTIMATED -> ink.copy(alpha = 0.5f)
+                st.src == NodeLog.Src.BACKFILL -> Fuse.Yellow
+                st.src == NodeLog.Src.AUTO -> ink.copy(alpha = 0.75f)
+                else -> ink
+            }
+            Column(
+                Modifier
+                    .widthIn(min = 54.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (isCur) Fuse.Yellow.copy(alpha = 0.16f) else chipBg)
+                    .then(if (isCur) Modifier.border(1.dp, Fuse.Yellow, RoundedCornerShape(10.dp)) else Modifier)
+                    .pointerInput(ref, st, editable) {
+                        detectTapGestures(
+                            onTap = { if (editable) onTap(ref) },
+                            onLongPress = {
+                                if (editable) editing = ref to minuteOf(st?.at ?: System.currentTimeMillis())
+                            },
+                        )
+                    }
+                    .padding(horizontal = 8.dp, vertical = 7.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(label, color = ink.copy(alpha = if (isCur) 0.9f else 0.55f), fontSize = 10.sp, maxLines = 1)
+                Text(
+                    (if (estimated) "≈" else "") + (st?.let { hhmm(it.at) } ?: "—"),
+                    color = timeColor, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, style = Tnum,
+                )
+            }
+        }
+    }
+
+    editing?.let { (ref, minute) ->
+        TimeWheelSheet(
+            title = "${NodeLog.label(ref.kind)} 时间",
+            initialMinute = minute,
+            onDismiss = { editing = null },
+            onConfirm = { m ->
+                editing = null
+                onLongPress(ref, atToday(m))
+            },
+        )
+    }
+}
+
+/** 结束后的「最近行程」：完整时间轴，可长按补录 */
+@Composable
+fun RecentRunCard(trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean) {
+    val ctx = LocalContext.current
+    var list by remember { mutableStateOf(nodes) }
+    androidx.compose.runtime.LaunchedEffect(nodes) { list = nodes }
+    Column(Modifier.fillMaxWidth().board(dark).padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("最近行程", color = Fuse.ink(dark), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(8.dp))
+            Text(trip.name, color = Fuse.ink(dark).copy(alpha = 0.5f), fontSize = 12.sp, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Text("长按节点可补录", color = Fuse.ink(dark).copy(alpha = 0.35f), fontSize = 10.sp)
+        }
+        NodeTimeline(
+            trip = trip, nodes = list, current = null, editable = true, dark = dark,
+            onTap = {},
+            onLongPress = { ref, at ->
+                val next = list + NodeLog.Stamp(ref.kind, ref.leg, at, NodeLog.Src.BACKFILL)
+                NodeLog.updateLast(ctx, next)
+                list = next
+            },
+        )
+    }
+}
+
+private fun hhmm(at: Long): String {
+    val c = java.util.Calendar.getInstance().apply { timeInMillis = at }
+    return String.format(java.util.Locale.US, "%02d:%02d",
+        c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
+}
+
+private fun minuteOf(at: Long): Int {
+    val c = java.util.Calendar.getInstance().apply { timeInMillis = at }
+    return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
+}
+
+private fun atToday(minute: Int): Long {
+    val c = java.util.Calendar.getInstance()
+    c.set(java.util.Calendar.HOUR_OF_DAY, minute / 60)
+    c.set(java.util.Calendar.MINUTE, minute % 60)
+    c.set(java.util.Calendar.SECOND, 0)
+    c.set(java.util.Calendar.MILLISECOND, 0)
+    var at = c.timeInMillis
+    // 跨零点：选 23:50 但现在是 00:10，归到昨天
+    if (at - System.currentTimeMillis() > 12 * 3600_000L) at -= 24 * 3600_000L
+    return at
 }

@@ -26,6 +26,13 @@ class TransitNotif : NotificationListenerService() {
             ex.getCharSequence(Notification.EXTRA_SUB_TEXT),
         ).joinToString(" ").trim()
         val all = "$title $text"
+        // 岭南通 / 羊城通：优先用弹窗逻辑解析「07:15 行程中」「08:06 刷卡完成，交易金额：5.60元」
+        if (TransitSignal.travelRelated(all)) {
+            TapPopup.read(all, sbn.postTime)?.let { hit ->
+                TransitSignal.post(this, hit.kind, all.take(120), sbn.packageName, hit.at ?: sbn.postTime)
+                return
+            }
+        }
         val kind = TransitSignal.classify(all) ?: return
         TransitSignal.post(this, kind, all.take(120), sbn.packageName, sbn.postTime)
     }
@@ -43,13 +50,15 @@ object TransitSignal {
     enum class Kind { ENTER, EXIT, ARRIVE, APPROACH, TAP }
 
     private const val PREFS = "transit_signal"
-    private val TRAVEL = Regex("进站|出站|交通卡|地铁|下车|到站|乘车")
+    private val TRAVEL = Regex("进站|出站|交通卡|地铁|下车|到站|乘车|行程中|岭南通|羊城通|刷卡完成|交易金额")
     private val EXIT = Regex("已出站|出站成功|出站扣费|刷卡出站")
-    private val ENTER = Regex("已进站|进站成功|刷卡进站")
+    private val ENTER = Regex("已进站|进站成功|刷卡进站|行程中")
     private val PROMO = Regex("奖励|领取|优惠|达标|红包|立减|福利|活动|券")
     private val ARRIVE = Regex("准备下车|当前站|即将到站|即将到达")
-    // 交通卡余额 / 低额提醒：只说明刚刷了卡，由 CommuteService 按当前段解释
-    private val TAP = Regex("余额|低额提醒")
+    // 交通卡余额 / 低额提醒 / 刷卡扣费：只说明刚刷了卡，由 CommuteService 按当前段解释
+    private val TAP = Regex("余额|低额提醒|刷卡完成|交易金额|本次消费")
+
+    fun travelRelated(s: String): Boolean = TRAVEL.containsMatchIn(s) && !PROMO.containsMatchIn(s)
 
     /** 只认明确的说法；对不上的出行通知只记录原文，不参与判断（以后按真实样本补规则） */
     fun classify(s: String): Kind? {
@@ -75,10 +84,14 @@ object TransitSignal {
     }
 
     fun post(ctx: Context, kind: Kind, text: String, pkg: String, at: Long) {
-        // 同一条通知会反复更新：同类信号 30 秒内只算一次
+        // 同一条通知会反复更新：同类信号 30 秒内只算一次；带钟点的记录按「种类 + 钟点」6 小时内只算一次
         val p = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val clock = Regex("(?<![\\d:])\\d{1,2}:\\d{2}(?![\\d:])").find(text)?.value
+        if (clock != null && p.getString("kind", null) == kind.name && p.getString("clock", null) == clock &&
+            at - p.getLong("at", 0) < 6 * 3600_000L) return
         if (p.getString("kind", null) == kind.name && at - p.getLong("at", 0) < 30_000) return
-        p.edit().putString("kind", kind.name).putLong("at", at).putString("text", text).putString("pkg", pkg).apply()
+        p.edit().putString("kind", kind.name).putLong("at", at).putString("text", text).putString("pkg", pkg)
+            .putString("clock", clock ?: "").apply()
         TraceLog.event("transit", "kind" to kind.name, "text" to text, "pkg" to pkg, "at" to at)
         val label = when (kind) { Kind.ENTER -> "进站"; Kind.EXIT -> "出站"; Kind.ARRIVE -> "到站提醒"; Kind.APPROACH -> "出行"; Kind.TAP -> "刷卡" }
         Diag.mark(ctx, "收到$label 通知：${text.take(30)}")
