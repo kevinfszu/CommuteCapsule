@@ -134,9 +134,9 @@ object DemoPlayer {
         Alert(T0, "现在走 · $METRO", "步行约 3 分钟到${METRO_STOPS.first()} · 本趟约 4 分钟进站 · 下趟约 10 分钟", true),
         Alert(IN - 60, "快到 ${METRO_STOPS.first()} · $METRO 约2分", "步行约 1 分钟到${METRO_STOPS.first()} · 本趟约 2 分钟进站 · 下趟约 8 分钟", true),
         Alert(IN, "已进站 · $METRO", "本趟约 1 分钟进站 · 下趟约 7 分钟", true),
-        Alert(XFER - 90, "快到 ${METRO_STOPS.last()} · $BUS 约7分", "步行约 $WALK 分钟到${BUS_STOPS.first()} · 先在站内等，到点叫你"),
+        Alert(XFER - 90, "即将到达“${METRO_STOPS.last()}”", "准备下车 · 下车后步行约 $WALK 分钟到${BUS_STOPS.first()}换乘 $BUS"),
         Alert(LEAVE, "现在走 · $BUS", "$BUS 4 分钟到 · 还有 2 站 · 步行 $WALK 分钟"),
-        Alert(PROMPT, "快到 ${BUS_STOPS.last()} 了", "准备下车"),
+        Alert(PROMPT, "即将到达“${BUS_STOPS.last()}”", "准备下车"),
     ) }
     private val LEAVE get() = BUS_ARR - (WALK + 1) * 60   // 步行 3 分钟 + 1 分钟余量 → 现在走
 

@@ -94,8 +94,11 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
     val cands = leg?.candidates.orEmpty()
     val shown = cands.filter { s.legTitle.contains(it.label()) }.take(3).ifEmpty { cands.take(1) }
     val main = shown.firstOrNull()
+    // 本段下车站：填了就用，换乘段没填时用下一段上车站
+    val alightName = leg?.candidates?.firstOrNull { it.alightName.isNotEmpty() }?.alightName
+        ?: trip?.legs?.getOrNull(s.legIndex + 1)?.candidates?.firstOrNull()?.stopName
     val headText = when {
-        s.riding && !main?.alightName.isNullOrEmpty() -> "到 ${main!!.alightName}"
+        s.riding && !alightName.isNullOrEmpty() -> "到 $alightName"
         !main?.stopName.isNullOrEmpty() -> main!!.stopName
         else -> s.legTitle
     }
