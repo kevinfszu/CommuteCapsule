@@ -186,6 +186,7 @@ class CommuteService : Service() {
             if (svc != null) { svc.userFinish(); return }
             ctx.getSharedPreferences("run_state", Context.MODE_PRIVATE).edit().clear().apply()
             LiveState.clearPersisted(ctx); LiveState.snapshot.value = null
+            LiveNotifier.clear(ctx)
             ctx.stopService(Intent(ctx, CommuteService::class.java))
         }
     }
@@ -599,13 +600,13 @@ class CommuteService : Service() {
         val title = AlightGuard.title(stage, name)
         val text = AlightGuard.text(stage)
         when (stage) {
-            AlightGuard.Stage.T2 -> LiveNotifier.alert(this, title, text, metro = metro, id = 1005)
+            AlightGuard.Stage.T2 -> LiveNotifier.alert(this, title, text, metro = metro, id = LiveNotifier.ALIGHT_ID)
             AlightGuard.Stage.T1 -> {
-                LiveNotifier.alert(this, title, text, metro = metro, id = 1005)
+                LiveNotifier.alert(this, title, text, metro = metro, id = LiveNotifier.ALIGHT_ID)
                 AlarmBuzzer.beep(this)
             }
             AlightGuard.Stage.AT, AlightGuard.Stage.OVERSHOOT -> {
-                LiveNotifier.alert(this, title, text, metro = metro, id = if (stage == AlightGuard.Stage.AT) 1005 else 1007, ack = true)
+                LiveNotifier.alert(this, title, text, metro = metro, id = if (stage == AlightGuard.Stage.AT) LiveNotifier.ALIGHT_ID else LiveNotifier.OVERSHOOT_ID, ack = true)
                 val cap = AlightGuard.maxRings(stage)
                 if (alightAlarmCount < cap) {
                     AlarmBuzzer.ring(this, long = stage == AlightGuard.Stage.OVERSHOOT)
@@ -2555,25 +2556,30 @@ class CommuteService : Service() {
     }
 
     private fun finish() {
+        if (finishing) return
+        finishing = true
         holdCpu(false)
         WakeAlarm.cancel(this)
         AlarmBuzzer.stop()
         if (metroRideOn) runCatching { endMetroRide() }
         if (busMovingOn) runCatching { busMovingOn = false; tacLearner?.let { it.endSurface(); MetroCells.save(this, it) } }
         TraceLog.onCell = null
-        if (!finishing && !tail) placeVotes()
-        if (tail && !finishing) TraceLog.event("tail_end", "after" to (System.currentTimeMillis() - tailStart) / 1000)
+        if (!tail) placeVotes()
+        if (tail) TraceLog.event("tail_end", "after" to (System.currentTimeMillis() - tailStart) / 1000)
         settleNodes(aborted = !arrived && !tail)
         TraceLog.event("finish", "leg" to legIdx, "riding" to riding)
         TraceLog.stop()
-        finishing = true
         NodeLog.current.value = null
         clearRun()
         try { lm?.removeUpdates(listener) } catch (_: Exception) { }
         stepSensor(false)
         power = null; highSince = 0L; coolUntil = 0L
         LiveState.clearPersisted(this)
-        if (instance === this || instance == null) LiveState.snapshot.value = null
+        if (instance === this || instance == null) {
+            LiveState.snapshot.value = null
+            // 显式取消，避免部分系统 stopForeground 后还留着流体云的壳或提醒通知
+            LiveNotifier.clear(this)
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

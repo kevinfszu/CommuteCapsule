@@ -22,6 +22,10 @@ object LiveNotifier {
     const val CHANNEL_POP = "commute_pop"
     const val LIVE_ID = 1001
     private const val ALERT_ID = 1002
+    /** 到站/准备下车提醒（带「我已下车」） */
+    const val ALIGHT_ID = 1005
+    /** 过站提醒 */
+    const val OVERSHOOT_ID = 1007
 
     const val BLUE = 0xFF3D7BFF.toInt()
     private const val BLUE_SOFT = 0xFF9DB9FF.toInt()
@@ -216,7 +220,29 @@ object LiveNotifier {
     fun unhide(ctx: Context) {
         if (!hidden) return
         hidden = false
+        // 行程已经结束、服务也不在：别拿缓存的旧通知再发一条幽灵胶囊
+        if (CommuteService.runningTripId() == null && !DemoPlayer.running) {
+            last = null
+            lastVisual = null
+            return
+        }
         last?.let { update(ctx, it) }
+    }
+
+    /**
+     * 行程结束：把胶囊与各类提醒一起收掉，并清掉缓存。
+     * 只靠 stopForeground 在部分系统上会留下 promoted ongoing 的壳，
+     * 而残留的 last 又会被下次打开 App 的 unhide 重新发出来。
+     */
+    fun clear(ctx: Context) {
+        hidden = false
+        popUntil = 0L
+        last = null
+        lastVisual = null
+        val nm = NotificationManagerCompat.from(ctx.applicationContext)
+        listOf(LIVE_ID, ALERT_ID, ALERT_ID + 1, ALIGHT_ID, OVERSHOOT_ID).forEach {
+            runCatching { nm.cancel(it) }
+        }
     }
 
     /** 后台启动被系统拦截时的兜底：普通提醒，点一下在前台启动 */
