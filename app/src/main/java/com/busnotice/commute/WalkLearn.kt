@@ -115,4 +115,3 @@ object WalkLearn {
         return if (xs.size >= 3) median(xs)?.toInt() else null
     }
 }
-}
