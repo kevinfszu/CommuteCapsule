@@ -173,7 +173,7 @@ fun TripEditor(
                     Stepper("终点下车比出站提前", trip.alightEstimateSec, 0, 900, unit = "秒") {
                         onChange(trip.copy(alightEstimateSec = it))
                     }
-                    Text("按刷卡过闸后算，不含安检和站外步行。有班次表时按发车间隔推算，这两项只在拿不到班次、也没有实测样本时兜底，不参与学习。",
+                    Text("按刷卡过闸后算，不含安检和站外步行。没打卡时用它们补算，节点条上带「≈」；这两个差值比较固定，推算结果也会计入学习样本。",
                         fontSize = 12.sp, lineHeight = 17.sp, color = dim)
                 }
             }

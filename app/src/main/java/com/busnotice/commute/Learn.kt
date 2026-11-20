@@ -188,7 +188,8 @@ object Learn {
     }
 
     // ---------- 节点派生时长：候车 / 换乘步行 / 站内步行 / 末段步行 / 反应时长 ----------
-    // 只用「实测 / 刷卡 / 自动」节点；推算与补录由调用方排除。按天去重，中位数。
+    // 按天去重，取中位数。补录样本一律不要；推算值只有候车与站内步行两个固定差可以用，
+    // 由调用方决定是否接纳（见 CommuteService.learnNodes）。
     private const val NODES = "learn_nodes"
 
     enum class Metric(val minSamples: Int, val range: IntRange) {

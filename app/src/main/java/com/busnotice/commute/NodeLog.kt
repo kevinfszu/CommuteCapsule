@@ -15,7 +15,7 @@ object NodeLog {
 
     enum class Kind { DEPART, ENTER, BOARD, ALIGHT, EXIT, ARRIVE }
 
-    /** 节点时间的来源。推算与补录不参与学习。 */
+    /** 节点时间的来源。补录不参与学习；推算值只用于「进站→上车」「下车→出站」这类固定差。 */
     enum class Src { AUTO, TAP, MANUAL, ESTIMATED, BACKFILL }
 
     data class Stamp(val kind: Kind, val leg: Int, val at: Long, val src: Src)

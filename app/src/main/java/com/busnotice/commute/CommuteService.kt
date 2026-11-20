@@ -648,36 +648,42 @@ class CommuteService : Service() {
     }
 
     /**
-     * 从结算后的时间轴学节点时长。只用实测 / 刷卡 / 自动的节点；
-     * 推算与补录一律不进样本，避免自我强化偏差。测试行程、中途上车、恢复的行程都不学。
+     * 从结算后的时间轴学节点时长。补录不参与。
+     * 推算值只用在两处「固定差」上：
+     * - 进站→上车：进站刷卡实测、上车按预设推算，差值就是候车；
+     * - 下车→出站：出站刷卡实测、下车按预设倒推，差值就是站内步行。
+     * 乘车、换乘步行、末段步行、反应时长只认实测，避免推算自我强化。
+     * 测试行程、中途上车、恢复的行程都不学。
      */
     private fun learnNodes(nodes: List<NodeLog.Stamp>, aborted: Boolean) {
         if (aborted || restored || manualRun) return
         val eff = NodeLog.effective(nodes)
-        fun real(kind: NodeLog.Kind, leg: Int): Long? =
+        fun at(kind: NodeLog.Kind, leg: Int, estimated: Boolean = false): Long? =
             eff[NodeLog.NodeRef(kind, leg)]
-                ?.takeIf { it.src != NodeLog.Src.ESTIMATED && it.src != NodeLog.Src.BACKFILL }?.at
+                ?.takeIf { it.src != NodeLog.Src.BACKFILL && (estimated || it.src != NodeLog.Src.ESTIMATED) }?.at
         fun sec(from: Long, to: Long) = ((to - from) / 1000).toInt()
 
         trip.legs.indices.forEach { i ->
-            val enter = real(NodeLog.Kind.ENTER, i)
-            val board = real(NodeLog.Kind.BOARD, i)
-            val alight = real(NodeLog.Kind.ALIGHT, i)
-            val exit = real(NodeLog.Kind.EXIT, i)
+            val enter = at(NodeLog.Kind.ENTER, i)
+            val boardReal = at(NodeLog.Kind.BOARD, i)
+            val board = at(NodeLog.Kind.BOARD, i, estimated = true)
+            val alight = at(NodeLog.Kind.ALIGHT, i)
+            val alightOrEst = at(NodeLog.Kind.ALIGHT, i, estimated = true)
+            val exit = at(NodeLog.Kind.EXIT, i)
             if (i != joinLeg) {
                 if (enter != null && board != null && board > enter) Learn.recordNode(this, Learn.Metric.WAIT, "${trip.id}#$i", sec(enter, board))
-                if (alight != null && exit != null && exit > alight) Learn.recordNode(this, Learn.Metric.EXIT_WALK, "${trip.id}#$i", sec(alight, exit))
+                if (alightOrEst != null && exit != null && exit > alightOrEst) Learn.recordNode(this, Learn.Metric.EXIT_WALK, "${trip.id}#$i", sec(alightOrEst, exit))
                 alightAlertAt[i]?.let { a -> if (alight != null && alight > a) Learn.recordNode(this, Learn.Metric.REACT, "${trip.id}#$i", sec(a, alight)) }
             }
             if (i > 0) {
-                val prev = real(NodeLog.Kind.ALIGHT, i - 1)
-                if (prev != null && board != null && board > prev) Learn.recordNode(this, Learn.Metric.TRANSFER, "${trip.id}#$i", sec(prev, board))
+                val prev = at(NodeLog.Kind.ALIGHT, i - 1)
+                if (prev != null && boardReal != null && boardReal > prev) Learn.recordNode(this, Learn.Metric.TRANSFER, "${trip.id}#$i", sec(prev, boardReal))
             }
         }
         val last = trip.legs.lastIndex
-        val arrive = real(NodeLog.Kind.ARRIVE, 0)
+        val arrive = at(NodeLog.Kind.ARRIVE, 0)
         val anchor = if (trip.legs.getOrNull(last)?.isMetroOnly() == true)
-            real(NodeLog.Kind.EXIT, last) else real(NodeLog.Kind.ALIGHT, last)
+            at(NodeLog.Kind.EXIT, last) else at(NodeLog.Kind.ALIGHT, last)
         if (arrive != null && anchor != null && arrive > anchor) Learn.recordNode(this, Learn.Metric.LAST_WALK, trip.id, sec(anchor, arrive))
         alightAlertAt.clear()
     }
