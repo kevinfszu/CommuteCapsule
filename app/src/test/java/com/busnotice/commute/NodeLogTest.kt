@@ -21,7 +21,7 @@ class NodeLogTest {
         startedAt = 900_000L, now = now,
         boardEstimateSec = 180, alightEstimateSec = 120,
         transferWalkSec = transfer.toList(), rideSec = listOf(600, 400),
-        exitWalkSec = 180, lastWalkSec = 480,
+        lastWalkSec = 480,
     )
 
     private fun at(nodes: List<Stamp>, kind: Kind, leg: Int = 0) =
@@ -38,15 +38,23 @@ class NodeLogTest {
         assertEquals(900_000L, at(n, Kind.DEPART))
     }
 
-    @Test fun metroAlightExitArriveFilled() {
+    @Test fun noExitAndNoArriveWithoutTap() {
         val raw = listOf(
             Stamp(Kind.ENTER, 0, 1_000_000L, Src.TAP),
             Stamp(Kind.BOARD, 0, 1_180_000L, Src.TAP),
         )
         val n = NodeLog.resolve(metroTrip(10), raw, anchors(), aborted = false)
         assertEquals(1_780_000L, at(n, Kind.ALIGHT))
-        assertEquals(1_960_000L, at(n, Kind.EXIT))
-        assertEquals(2_440_000L, at(n, Kind.ARRIVE))
+        // 出站只来自刷卡/基站，不能用下车时间推算
+        assertNull(at(n, Kind.EXIT))
+        assertNull(at(n, Kind.ARRIVE))
+    }
+
+    @Test fun estimatedExitNeverCreated() {
+        val raw = listOf(Stamp(Kind.ENTER, 0, 1_000_000L, Src.TAP))
+        val n = NodeLog.resolve(metroTrip(10), raw, anchors(), aborted = false)
+        assertNull(at(n, Kind.EXIT))
+        assertNull(src(n, Kind.EXIT))
     }
 
     @Test fun transferBoardFromPrevAlight() {

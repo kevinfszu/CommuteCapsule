@@ -179,7 +179,7 @@ fun TripEditor(
                     Stepper("终点下车比出站提前", trip.alightEstimateSec, 0, 900, unit = "秒") {
                         onChange(trip.copy(alightEstimateSec = it))
                     }
-                    Text("按刷卡过闸后算，不含安检和站外步行。没打卡时用它们补算，节点条上带「≈」；这两个差值比较固定，推算结果也会计入学习样本。",
+                    Text("「过闸后预计多久上车」用于没打卡时的上车推算，推算值也会计入学习样本。出站时间永远以刷卡为准；「终点下车比出站提前」只在忘记下车打卡时，用出站时间倒推下车。推算值带「≈」标记。",
                         fontSize = 12.sp, lineHeight = 17.sp, color = dim)
                 }
             }

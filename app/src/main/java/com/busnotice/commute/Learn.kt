@@ -235,9 +235,6 @@ object Learn {
     fun transferWalkSec(ctx: Context, tripId: String, legIdx: Int) =
         nodeSec(ctx, Metric.TRANSFER, "$tripId#$legIdx")
 
-    fun exitWalkSec(ctx: Context, tripId: String, legIdx: Int) =
-        nodeSec(ctx, Metric.EXIT_WALK, "$tripId#$legIdx")
-
     fun lastWalkSec(ctx: Context, tripId: String) = nodeSec(ctx, Metric.LAST_WALK, tripId)
 
     fun reactSec(ctx: Context, tripId: String, legIdx: Int) = nodeSec(ctx, Metric.REACT, "$tripId#$legIdx")

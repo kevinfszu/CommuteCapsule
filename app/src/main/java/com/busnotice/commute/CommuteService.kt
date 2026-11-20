@@ -550,9 +550,14 @@ class CommuteService : Service() {
             AlarmBuzzer.stop()
             if (riding) {
                 if (legIdx >= trip.legs.size - 1) {
-                    stampNode(NodeLog.Kind.ALIGHT, legIdx, now, NodeLog.Src.MANUAL)
-                    arrived = true
-                    endTrip("ack")
+                    markAlight(now, "user")
+                    // 地铁：下车不等于出站，还在站内，等刷卡/基站出站后才结束
+                    if (trip.legs[legIdx].isMetroOnly()) {
+                        Diag.mark(this, "已确认下车，还在站内，等待出站")
+                    } else {
+                        arrived = true
+                        endTrip("ack")
+                    }
                 } else {
                     markAlight(now, "user")
                     setPower(Power.HIGH)
@@ -566,7 +571,16 @@ class CommuteService : Service() {
         }
     }
 
+    /** 最后一段是地铁、且还没出站：下车/到站/到家都不能结束行程 */
+    private fun metroStillInside(): Boolean {
+        if (!::trip.isInitialized) return false
+        val last = trip.legs.lastIndex
+        if (trip.legs.getOrNull(last)?.isMetroOnly() != true) return false
+        return NodeLog.flow.value.none { it.kind == NodeLog.Kind.EXIT && it.leg == last }
+    }
+
     private fun resetAlightGuard() {
+        placeExitWaitLogged = false
         alightAckedAt = 0L
         alightStage = AlightGuard.Stage.NONE
         alightStageAt = 0L
@@ -636,7 +650,6 @@ class CommuteService : Service() {
                 alightEstimateSec = trip.alightEstimateSec,
                 transferWalkSec = trip.legs.indices.map { transferWalkSecOf(it).coerceAtLeast(60) },
                 rideSec = trip.legs.indices.map { (rideMs(it) / 1000).toInt() },
-                exitWalkSec = Learn.exitWalkSec(this, trip.id, trip.legs.lastIndex) ?: 180,
                 lastWalkSec = Learn.lastWalkSec(this, trip.id)
                     ?: WalkLearn.durationMedian(this, trip.id, "last") ?: 480,
             )
@@ -650,9 +663,8 @@ class CommuteService : Service() {
 
     /**
      * 从结算后的时间轴学节点时长。补录不参与。
-     * 推算值只用在两处「固定差」上：
-     * - 进站→上车：进站刷卡实测、上车按预设推算，差值就是候车；
-     * - 下车→出站：出站刷卡实测、下车按预设倒推，差值就是站内步行。
+     * 推算值只用在「进站→上车」这种固定差上：进站刷卡实测、上车按预设推算，差值就是候车。
+     * 出站从不推算，所以「下车→出站」只统计实测差值，不再用于补算。
      * 乘车、换乘步行、末段步行、反应时长只认实测，避免推算自我强化。
      * 测试行程、中途上车、恢复的行程都不学。
      */
@@ -1517,12 +1529,17 @@ class CommuteService : Service() {
             }
             TraceLog.event("ride_end", "leg" to legIdx, "by" to (if (byLoc) "loc" else "time"))
             // 地铁按位置到站：记下这次实际坐了多久（用于后续按站推算，避免过早提示即将到站）
-            if (byLoc && !metroOut && metro && boardedAt > 0) {
+            if (byLoc && !metroOut && metro && boardedAt > 0 && alightAt == 0L) {
                 val min = ((now - boardedAt) / 60_000L).toInt()
                 val plan = (rideMs(legIdx) / 60_000L).toInt()
                 if (min >= 3 && min in plan / 2..plan * 2 + 5) learnRide(legIdx, min)
             }
             if (legIdx >= trip.legs.size - 1) {
+                if (metro) {
+                    // 地铁：到站/定位到站只说明离开车厢，结束要等刷卡或基站出站
+                    if (alightAt == 0L) markAlight(now, if (byLoc) "loc" else "time")
+                    return 30_000L
+                }
                 stampNode(NodeLog.Kind.ALIGHT, legIdx, now, NodeLog.Src.AUTO)
                 arrived = true
                 endTrip("ride_" + (if (byLoc) "loc" else "time")); return 30_000L
@@ -1746,6 +1763,7 @@ class CommuteService : Service() {
     private var lastPlace: Places.Label? = null
     private var placeSince = 0L
     private var startLabel: Places.Label? = null
+    private var placeExitWaitLogged = false
 
     private fun placeFix(loc: Location) {
         runCatching {
@@ -1769,6 +1787,15 @@ class CommuteService : Service() {
             // 一次车都没坐过就不按「到家/到公司」结束：分不清是到了还是根本没走（实测：首个定位晚到，在公司里被判成「到公司」）
             if ((l == Places.Label.HOME || l == Places.Label.WORK) && l != startLabel && !neverBoarded && !arrived && !tail && !finishing &&
                 loc.time - startedAt > 5 * 60_000L && loc.time - placeSince >= 3 * 60_000L) {
+                // 地铁最后一段还没出站：人可能刚出闸/还在通道里，不擅自结束
+                if (metroStillInside()) {
+                    if (!placeExitWaitLogged) {
+                        placeExitWaitLogged = true
+                        TraceLog.event("place_arrive_wait_exit", "label" to l.name)
+                        Diag.mark(this, "已经${if (l == Places.Label.HOME) "到家" else "到公司"}附近，还在等地铁出站")
+                    }
+                    return
+                }
                 TraceLog.event("place_arrive", "label" to l.name, "leg" to legIdx, "riding" to riding)
                 Diag.mark(this, "已经${if (l == Places.Label.HOME) "到家" else "到公司"}，行程结束")
                 arrived = true
@@ -2492,7 +2519,9 @@ class CommuteService : Service() {
                 when {
                     riding && cur.isMetroOnly() && legIdx == last -> {
                         endMetroRide()
-                        stampNode(NodeLog.Kind.ALIGHT, legIdx, System.currentTimeMillis(), NodeLog.Src.AUTO)
+                        // 基站离开地下 = 出站；下车时间按同一时刻补记
+                        stampNode(NodeLog.Kind.EXIT, legIdx, edge.second, NodeLog.Src.AUTO)
+                        markAlight(edge.second, by = "cell")
                         Diag.mark(this, "离开地铁里的基站，判断已出站，行程结束")
                         arrived = true
                         endTrip("cell_exit")
@@ -2507,6 +2536,7 @@ class CommuteService : Service() {
                     }
                     !riding && legIdx > 0 && trip.legs[legIdx - 1].isMetroOnly() && alightAt == 0L -> {
                         endMetroRide()
+                        stampNode(NodeLog.Kind.EXIT, legIdx - 1, edge.second, NodeLog.Src.AUTO)
                         markAlight(edge.second, by = "cell")
                     }
                 }

@@ -15,7 +15,7 @@ object NodeLog {
 
     enum class Kind { DEPART, ENTER, BOARD, ALIGHT, EXIT, ARRIVE }
 
-    /** 节点时间的来源。补录不参与学习；推算值只用于「进站→上车」「下车→出站」这类固定差。 */
+    /** 节点时间的来源。补录不参与学习；推算值只用于「进站→上车」「出站→下车」这类固定差，出站本身从不推算。 */
     enum class Src { AUTO, TAP, MANUAL, ESTIMATED, BACKFILL }
 
     data class Stamp(val kind: Kind, val leg: Int, val at: Long, val src: Src)
@@ -32,7 +32,6 @@ object NodeLog {
         val alightEstimateSec: Int = 120,
         val transferWalkSec: List<Int> = emptyList(),
         val rideSec: List<Int> = emptyList(),
-        val exitWalkSec: Int = 180,
         val lastWalkSec: Int = 480,
     )
 
@@ -128,6 +127,7 @@ object NodeLog {
 
     /**
      * 结束时补算缺失节点。只从已有锚点推导，不臆造；用户提前结束时不补算未来节点。
+     * 出站只来自刷卡或基站实测，从不使用下车时间反推；下车缺失时用「出站 − alightEstimateSec」倒推。
      */
     fun resolve(trip: Trip, raw: List<Stamp>, a: Anchors, aborted: Boolean): List<Stamp> {
         val eff = effective(raw).toMutableMap()
@@ -182,11 +182,6 @@ object NodeLog {
                         Kind.ALIGHT, i, b + ride(a, i) * 1000L, b, exit
                     )
                 }
-            }
-
-            if (!aborted && metro && exit == null) {
-                val al = get(Kind.ALIGHT, i)
-                if (al != null) putIfMissing(Kind.EXIT, i, al + a.exitWalkSec * 1000L, al, null)
             }
         }
 
