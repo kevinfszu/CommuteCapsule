@@ -11,7 +11,7 @@ object Reverse {
         val legs = src.legs.reversed().mapIndexed { j, leg ->
             val cands = leg.candidates.mapNotNull { c -> reverseCandidate(c, warnings) }
             val walk = if (j == 0) leg.transferWalkMin else src.legs[n - j].transferWalkMin
-            Leg(cands, rideMin = leg.rideMin, transferWalkMin = walk)
+            Leg(cands, rideMin = leg.rideMin, rideMinManual = leg.rideMinManual, transferWalkMin = walk)
         }.filter { it.candidates.isNotEmpty() }
         val trip = Trip(
             name = if (src.name.contains("上班")) "下班" else src.name + "·回程",

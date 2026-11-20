@@ -334,11 +334,10 @@ class CommuteService : Service() {
         return end.plusMinutes(extra.toLong()).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
 
-    /** 这段大概坐多久：实测攒够 3 次用实测中位数，否则用手填的 */
+    /** 这段大概坐多久：实测攒够 3 次用实测中位数；否则手填值；没手填就按地铁站数估算 */
     private fun rideMs(i: Int): Long {
         Learn.rideMin(this, trip.id, i)?.let { return (it * 60_000L * (if (i == joinLeg) joinScale else 1.0)).toLong() }
-        metroRideSec[i]?.let { return it * 1000L }
-        return trip.legs[i].rideMin * 60_000L
+        return trip.legs[i].rideSec(metroRideSec[i]) * 1000L
     }
 
     /** 地铁段按站数估的乘车秒数（每站约 2 分 20 秒，含停站） */
@@ -1167,8 +1166,9 @@ class CommuteService : Service() {
             (if (metro) d <= 700 else d <= 350 + minOf(loc?.accuracy ?: 0f, 50f))
         // 公交有新鲜沿线投影：过了倒数第二站（只剩 1 站）且离站 ≤ 600 米才算快到
         val busLast = !metro && bs != null && bs.stopsLeft <= 1 && d != null && d <= 600
-        // 地铁段还没拿到站数（服务刚恢复、预取没完成）时，手填的乘车时间不可靠，先不按时间提醒下车
-        val etaKnown = !metro || metroRideSec[legIdx] != null || Learn.rideMin(this, trip.id, legIdx) != null
+        // 地铁段既没站数、也没手填、也没实测时，乘车时间不可靠，先不按时间提醒下车
+        val etaKnown = !metro || metroRideSec[legIdx] != null ||
+            Learn.rideMin(this, trip.id, legIdx) != null || trip.legs[legIdx].rideMinManual
         // 按时间提醒「快到了」：有定位且离下车站 1.5 公里以上时不提醒（地铁里网络定位误差大，放宽精度）
         // 公交有新鲜定位时只信位置，不按倒计时（倒计时只在没定位时兜底）
         val timeUp = etaKnown && now >= eta - 90_000 && !freshFar &&

@@ -223,7 +223,10 @@ fun TripEditor(
                         // 一段里上车站不同的几条线 → 按上车站拆成先后几段（地铁在前）
                         val groups = leg.candidates.groupBy { it.stopName }.values
                             .sortedBy { g -> if (g.any { it.type == Candidate.Type.METRO }) 0 else 1 }
-                        val parts = groups.mapIndexed { k, g -> Leg(g, rideMin = leg.rideMin, transferWalkMin = if (k == 0) leg.transferWalkMin else 3) }
+                        val parts = groups.mapIndexed { k, g ->
+                            Leg(g, rideMin = leg.rideMin, rideMinManual = leg.rideMinManual,
+                                transferWalkMin = if (k == 0) leg.transferWalkMin else 3)
+                        }
                         onChange(trip.copy(legs = trip.legs.toMutableList().also { l -> l.removeAt(i); l.addAll(i, parts) }))
                     },
                 )
@@ -371,7 +374,7 @@ private fun LegCard(
                 GlassChip(selected = false, onClick = onAddShuttle, label = "+ 通勤班车")
                 GlassChip(selected = false, onClick = onAddMetro, label = "+ 地铁")
             }
-            // 地铁段：按站数自动估，手填的只在拿不到数据时兜底
+            // 地铁段：手填的优先；没手填时用按站数估算的值作为默认
             val metro = leg.candidates.firstOrNull { it.isMetro() }.takeIf { leg.isMetroOnly() }
             val ctx = LocalContext.current
             val target = metro?.let {
@@ -384,16 +387,20 @@ private fun LegCard(
                     MetroRoutes.get(ctx, metro, target.first, target.second, target.third)
                 }
             }
-            Stepper(if (isLast) "预计乘车时长（接近下车站时提醒）" else if (metro != null) "无法获取站数时按此时长计算" else "本段预计乘车时长",
-                leg.rideMin, 1, 120) {
-                onChange(leg.copy(rideMin = it))
+            // 没手填过时，步进器显示按站数估算的默认值；一调整就成为手填值
+            val routeEst = route?.let { ((it.durSec + 59) / 60).coerceIn(1, 120) }
+            Stepper(if (isLast) "预计乘车时长（接近下车站时提醒）" else if (metro != null) "本段预计乘车时长（默认按站数估算）" else "本段预计乘车时长",
+                if (leg.rideMinManual) leg.rideMin else routeEst ?: leg.rideMin, 1, 120) {
+                onChange(leg.copy(rideMin = it, rideMinManual = true))
             }
             val noteColor = if (dark) Color(0xFF7FE0A6) else Color(0xFF167A40)
             when {
                 learnedRide != null -> Text("实测平均乘车 $learnedRide 分钟，推算时以实测为准", fontSize = 12.sp, lineHeight = 17.sp,
                     color = noteColor)
                 route != null -> Text(route!!.let { r ->
-                    "自动估算：${r.stations.first().name} → ${r.stations.last().name}，共 ${r.hops} 站，约 ${(r.durSec + 59) / 60} 分钟；乘坐满 3 次后改用实测用时"
+                    val est = (r.durSec + 59) / 60
+                    if (leg.rideMinManual) "按你填写的 ${leg.rideMin} 分钟推算；按站数估算约 $est 分钟"
+                    else "自动按站数估算：${r.stations.first().name} → ${r.stations.last().name}，共 ${r.hops} 站，约 $est 分钟；乘坐满 3 次后改用实测用时"
                 }, fontSize = 12.sp, lineHeight = 17.sp, color = noteColor)
             }
     }

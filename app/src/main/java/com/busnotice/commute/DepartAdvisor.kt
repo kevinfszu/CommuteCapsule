@@ -18,7 +18,7 @@ import kotlin.math.abs
  * 出发提醒（第一版，粗估）：行程还没开始、在时间窗里时，
  * 用换乘站公交的实时到站 − 前面几段要花的时间，反推「几点出发刚好接上」。
  *
- * 前面几段的用时优先用本机学到的（首段步行中位数、地铁乘车中位数），没学够就用行程里填的；
+ * 前面几段的用时优先级与运行时一致：本机实测中位数 > 手填值 > 地铁按站数估算（只读本机缓存）。
  * 实时只看得到正在路上的几辆车，再往后的班次按这几辆车的间隔往后推（标成「推算」）。
  * 只在「最早出发时刻 = max(现在, 时间窗开始)」之后找车；同一班车只提醒一次，换了目标班次才更新。
  */
@@ -117,9 +117,22 @@ object DepartAdvisor {
         for (i in 0 until busLeg) {
             val leg = trip.legs[i]
             if (i > 0) before += leg.transferWalkMin
-            before += (Learn.rideMin(ctx, trip.id, i) ?: leg.rideMin) + if (leg.isMetroOnly()) METRO_WAIT_MIN else 0
+            before += rideMinOf(ctx, trip, i) + if (leg.isMetroOnly()) METRO_WAIT_MIN else 0
         }
         return Lead(first, before, trip.legs[busLeg].transferWalkMin)
+    }
+
+    /** 与运行时优先级一致：实测 > 手填 > 地铁按站数估算（只读本机缓存，不联网） */
+    private fun rideMinOf(ctx: Context, trip: Trip, i: Int): Int {
+        val leg = trip.legs[i]
+        Learn.rideMin(ctx, trip.id, i)?.let { return it }
+        if (!leg.isMetroOnly() || leg.rideMinManual) return leg.rideMin
+        val c = leg.candidates.firstOrNull { it.isMetro() }
+        val target = MetroRoutes.target(trip, i)
+        val sec = if (c != null && target != null) {
+            MetroRoutes.cached(ctx, c, target.second, target.third)?.durSec
+        } else null
+        return sec?.let { (it + 59) / 60 } ?: leg.rideMin
     }
 
     /** 第一段公交在第几段（之前须有其他段；首段即为公交的行程由常规流程处理） */

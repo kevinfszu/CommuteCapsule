@@ -29,7 +29,11 @@ fun App(resumeTick: Int) {
         val leg = legs[legIndex]
         val cands = leg.candidates.toMutableList()
         if (replaceAt in cands.indices) cands[replaceAt] = c else cands += c
-        legs[legIndex] = leg.copy(candidates = cands, rideMin = if (rideMin > 0) rideMin else leg.rideMin)
+        legs[legIndex] = leg.copy(
+            candidates = cands,
+            rideMin = if (rideMin > 0) rideMin else leg.rideMin,
+            rideMinManual = if (rideMin > 0) true else leg.rideMinManual,
+        )
         draft = draft.copy(legs = legs)
         screen = Screen.Edit
     }

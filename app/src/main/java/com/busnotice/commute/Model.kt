@@ -158,23 +158,32 @@ data class Candidate(
 /** 行程中的一段：在同一处换乘点可选的若干交通方式，哪个先来坐哪个 */
 data class Leg(
     val candidates: List<Candidate>,
-    val rideMin: Int = 10,          // 这段大约坐多久
+    val rideMin: Int = 10,          // 这段大约坐多久（默认值由地铁按站数估算得出，可手动调整）
     val transferWalkMin: Int = 3,   // 从上一段下车走到这里要多久（第一段忽略）
+    val rideMinManual: Boolean = false, // rideMin 是否由用户手填；false 时地铁段优先用按站数估算
 ) {
     fun title(): String = candidates.joinToString(" / ") { it.label() }.ifEmpty { "未设置" }
     fun stopName(): String = candidates.map { it.stopName }.distinct().joinToString(" / ")
     fun isMetroOnly() = candidates.isNotEmpty() && candidates.all { it.type == Candidate.Type.METRO }
 
+    /** 乘车秒数（不含实测）：手填优先；没手填时地铁按站数估算优先，拿不到再退回 rideMin */
+    fun rideSec(metroSec: Int? = null): Int =
+        if (rideMinManual || metroSec == null) rideMin * 60 else metroSec
+
     fun toJson(): JSONObject = JSONObject()
         .put("candidates", JSONArray().apply { candidates.forEach { put(it.toJson()) } })
         .put("rideMin", rideMin).put("transferWalkMin", transferWalkMin)
+        .put("rideMinManual", rideMinManual)
 
     companion object {
         fun fromJson(o: JSONObject): Leg {
             val arr = o.optJSONArray("candidates") ?: JSONArray()
+            val ride = o.optInt("rideMin", 10)
             return Leg(
                 candidates = (0 until arr.length()).map { Candidate.fromJson(arr.getJSONObject(it)) },
-                rideMin = o.optInt("rideMin", 10), transferWalkMin = o.optInt("transferWalkMin", 3),
+                rideMin = ride, transferWalkMin = o.optInt("transferWalkMin", 3),
+                // 旧数据没有这个字段：和默认 10 分钟不同就认为用户调过
+                rideMinManual = o.optBoolean("rideMinManual", ride != 10),
             )
         }
     }
