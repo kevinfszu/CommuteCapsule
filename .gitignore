@@ -4,3 +4,5 @@ local.properties
 .idea/
 *.iml
 /data/
+# 本地签名密钥备份（勿提交）
+.signing/

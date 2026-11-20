@@ -28,23 +28,18 @@ android {
         buildConfigField("String", "TRANSIT_DATA_URL", "\"" + (System.getenv("TRANSIT_DATA_URL") ?: "") + "\"")
     }
 
-    // 签名：优先用 CI 注入的固定密钥（SIGNING_KEYSTORE_PATH），没有就用仓库内置的 keystore/commutecapsule.p12。
-    // 两者都没有才退回 Android 默认调试签名——那个每次构建都是新密钥，装新版本会报「与已安装应用签名不同」。
-    val envKs = System.getenv("SIGNING_KEYSTORE_PATH")
-    val repoKs = rootProject.file("keystore/commutecapsule.p12")
-    val envFile = envKs?.takeIf { it.isNotEmpty() }?.let { file(it) }?.takeIf { it.exists() }
-    val fixedKs = envFile ?: repoKs.takeIf { it.exists() }
-    if (fixedKs != null) {
-        val fromRepo = fixedKs == repoKs
-        // 工作流里未配置的 Secret 会以空字符串传进来，不能当成「有值」：必须过滤掉再回退
-        fun envOr(name: String, def: String) = System.getenv(name)?.takeIf { it.isNotEmpty() } ?: def
+    // 签名：CI 用 Secrets 注入固定密钥（SIGNING_KEYSTORE_B64 解码后写入 SIGNING_KEYSTORE_PATH）。
+    // 没配置就退回 Android 默认调试签名——那个每次构建都是新密钥，装新版本会报「与已安装应用签名不同」。
+    // 工作流里未配置的 Secret 会以空字符串传进来，必须过滤掉再判断。
+    val ks = System.getenv("SIGNING_KEYSTORE_PATH")
+    if (!ks.isNullOrEmpty() && file(ks).exists()) {
+        fun envOr(name: String) = System.getenv(name)?.takeIf { it.isNotEmpty() }
         signingConfigs {
             create("fixed") {
-                storeFile = fixedKs
-                if (fromRepo) storeType = "PKCS12"   // 仓库内置的是 PKCS12；CI 注入的按 Java 默认类型读
-                storePassword = envOr("SIGNING_STORE_PASSWORD", "commute2026")
-                keyAlias = envOr("SIGNING_KEY_ALIAS", "commutecapsule")
-                keyPassword = envOr("SIGNING_KEY_PASSWORD", "commute2026")
+                storeFile = file(ks)
+                storePassword = envOr("SIGNING_STORE_PASSWORD")
+                keyAlias = envOr("SIGNING_KEY_ALIAS")
+                keyPassword = envOr("SIGNING_KEY_PASSWORD")
             }
         }
         buildTypes { debug { signingConfig = signingConfigs.getByName("fixed") } }

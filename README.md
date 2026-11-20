@@ -67,7 +67,7 @@ cp -r examples/json-source app/src/extra   # 复制模板
 
 ## 构建
 
-推送到 GitHub 后 Actions 自动编译并跑单元测试；打 `v主.次.修订` 标签时发布正式版到 Releases，说明取自 [CHANGELOG.md](CHANGELOG.md)。默认包名为 `io.github.commutecapsule`，可通过环境变量 `APP_ID` 修改。签名优先用仓库内置的 `keystore/commutecapsule.p12`（别名 `commutecapsule`，口令 `commute2026`），保证每个版本签名一致、可直接覆盖安装；想换成自己的密钥，在仓库 Secrets 里配置 `SIGNING_KEYSTORE_B64`、`SIGNING_STORE_PASSWORD`、`SIGNING_KEY_ALIAS`、`SIGNING_KEY_PASSWORD` 即可覆盖内置签名。
+推送到 GitHub 后 Actions 自动编译并跑单元测试；打 `v主.次.修订` 标签时发布正式版到 Releases，说明取自 [CHANGELOG.md](CHANGELOG.md)。默认包名为 `io.github.commutecapsule`，可通过环境变量 `APP_ID` 修改。需要固定签名（否则每次构建密钥不同、新版本无法覆盖安装）时，在仓库 Secrets 里配置 `SIGNING_KEYSTORE_B64`、`SIGNING_STORE_PASSWORD`、`SIGNING_KEY_ALIAS`、`SIGNING_KEY_PASSWORD`；不配置则使用 Android 默认调试签名。
 
 要求 Android 12+（`minSdk 31`），实时通知胶囊需要 Android 16。
 
