@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.key
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.clickable
@@ -217,7 +218,7 @@ fun TripEditor(
                     onAddBus = { onAddBus(i) }, onAddMetro = { onAddMetro(i) },
                     onAddShuttle = { onEditShuttle(i, -1) },
                     onEditShuttle = { ci -> onEditShuttle(i, ci) },
-                    learnedRide = remember(trip.id, i) { Learn.rideMin(ctx, trip.id, i) },
+                    tripId = trip.id,
                     nextStop = trip.legs.getOrNull(i + 1)?.candidates?.firstOrNull(),
                     onSplit = {
                         // 一段里上车站不同的几条线 → 按上车站拆成先后几段（地铁在前）
@@ -282,9 +283,9 @@ private fun LegCard(
     onSplit: () -> Unit = {},
     nextStop: Candidate? = null,
     index: Int, leg: Leg, isLast: Boolean,
+    tripId: String,
     onChange: (Leg) -> Unit, onRemove: () -> Unit,
     onAddBus: () -> Unit, onAddMetro: () -> Unit, onAddShuttle: () -> Unit, onEditShuttle: (Int) -> Unit,
-    learnedRide: Int? = null,
 ) {
     var editing by remember { mutableStateOf<Int?>(null) }
     editing?.let { ci ->
@@ -374,7 +375,7 @@ private fun LegCard(
                 GlassChip(selected = false, onClick = onAddShuttle, label = "+ 通勤班车")
                 GlassChip(selected = false, onClick = onAddMetro, label = "+ 地铁")
             }
-            // 地铁段：手填的优先；没手填时用按站数估算的值作为默认
+            // 地铁段：站数估算只作为默认值，最终统一由 Learn.ride 给出唯一结果
             val metro = leg.candidates.firstOrNull { it.isMetro() }.takeIf { leg.isMetroOnly() }
             val ctx = LocalContext.current
             val target = metro?.let {
@@ -387,22 +388,47 @@ private fun LegCard(
                     MetroRoutes.get(ctx, metro, target.first, target.second, target.third)
                 }
             }
-            // 没手填过时，步进器显示按站数估算的默认值；一调整就成为手填值
-            val routeEst = route?.let { ((it.durSec + 59) / 60).coerceIn(1, 120) }
-            Stepper(if (isLast) "预计乘车时长（接近下车站时提醒）" else if (metro != null) "本段预计乘车时长（默认按站数估算）" else "本段预计乘车时长",
-                if (leg.rideMinManual) leg.rideMin else routeEst ?: leg.rideMin, 1, 120) {
-                onChange(leg.copy(rideMin = it, rideMinManual = true))
+            val ride = Learn.ride(ctx, tripId, index, leg, route?.durSec)
+            var pendingRide by remember { mutableStateOf<Int?>(null) }
+            var stepperNonce by remember { mutableStateOf(0) }
+            if (ride.source == Learn.Ride.Source.LEARNED) {
+                pendingRide?.let { v ->
+                    AlertDialog(
+                        onDismissRequest = { pendingRide = null; stepperNonce++ },
+                        title = { Text("修改乘车时长") },
+                        text = {
+                            Text("修改将清空本段 ${Learn.rideSamples(ctx, tripId, index)} 次实测记录，之后重新统计实测值。")
+                        },
+                        confirmButton = {
+                            DialogButton("确定修改", primary = true, onClick = {
+                                Learn.resetRide(ctx, tripId, index)
+                                pendingRide = null
+                                onChange(leg.copy(rideMin = v, rideMinManual = true))
+                            })
+                        },
+                        dismissButton = {
+                            DialogButton("取消", onClick = { pendingRide = null; stepperNonce++ })
+                        },
+                    )
+                }
+            }
+            key(ride.minutes, stepperNonce) {
+                Stepper(if (isLast) "预计乘车时长（接近下车站时提醒）" else "本段预计乘车时长",
+                    ride.minutes, 1, 120) { v ->
+                    if (ride.source == Learn.Ride.Source.LEARNED) pendingRide = v
+                    else onChange(leg.copy(rideMin = v, rideMinManual = true))
+                }
             }
             val noteColor = if (dark) Color(0xFF7FE0A6) else Color(0xFF167A40)
-            when {
-                learnedRide != null -> Text("实测平均乘车 $learnedRide 分钟，推算时以实测为准", fontSize = 12.sp, lineHeight = 17.sp,
-                    color = noteColor)
-                route != null -> Text(route!!.let { r ->
-                    val est = (r.durSec + 59) / 60
-                    if (leg.rideMinManual) "按你填写的 ${leg.rideMin} 分钟推算；按站数估算约 $est 分钟"
-                    else "自动按站数估算：${r.stations.first().name} → ${r.stations.last().name}，共 ${r.hops} 站，约 $est 分钟；乘坐满 3 次后改用实测用时"
-                }, fontSize = 12.sp, lineHeight = 17.sp, color = noteColor)
+            val note = when (ride.source) {
+                Learn.Ride.Source.LEARNED ->
+                    "已按实测中位数 ${ride.minutes} 分钟（共 ${Learn.rideSamples(ctx, tripId, index)} 次）推算；修改需清空实测记录"
+                Learn.Ride.Source.MANUAL -> "按你填写的 ${ride.minutes} 分钟推算"
+                Learn.Ride.Source.ESTIMATE -> "按站数估算 ${ride.minutes} 分钟；坐满 3 次后改用实测"
+                Learn.Ride.Source.DEFAULT ->
+                    if (metro != null) "默认 ${ride.minutes} 分钟（选好下车站后可估算）" else "默认 ${ride.minutes} 分钟"
             }
+            Text(note, fontSize = 12.sp, lineHeight = 17.sp, color = noteColor)
     }
 }
 

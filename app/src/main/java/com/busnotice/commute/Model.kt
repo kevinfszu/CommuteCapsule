@@ -166,10 +166,6 @@ data class Leg(
     fun stopName(): String = candidates.map { it.stopName }.distinct().joinToString(" / ")
     fun isMetroOnly() = candidates.isNotEmpty() && candidates.all { it.type == Candidate.Type.METRO }
 
-    /** 乘车秒数（不含实测）：手填优先；没手填时地铁按站数估算优先，拿不到再退回 rideMin */
-    fun rideSec(metroSec: Int? = null): Int =
-        if (rideMinManual || metroSec == null) rideMin * 60 else metroSec
-
     fun toJson(): JSONObject = JSONObject()
         .put("candidates", JSONArray().apply { candidates.forEach { put(it.toJson()) } })
         .put("rideMin", rideMin).put("transferWalkMin", transferWalkMin)

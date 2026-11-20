@@ -122,17 +122,15 @@ object DepartAdvisor {
         return Lead(first, before, trip.legs[busLeg].transferWalkMin)
     }
 
-    /** 与运行时优先级一致：实测 > 手填 > 地铁按站数估算（只读本机缓存，不联网） */
+    /** 与运行时一致，统一走 Learn.ride：实测 > 手填 > 地铁按站数估算（只读本机缓存，不联网） */
     private fun rideMinOf(ctx: Context, trip: Trip, i: Int): Int {
         val leg = trip.legs[i]
-        Learn.rideMin(ctx, trip.id, i)?.let { return it }
-        if (!leg.isMetroOnly() || leg.rideMinManual) return leg.rideMin
         val c = leg.candidates.firstOrNull { it.isMetro() }
-        val target = MetroRoutes.target(trip, i)
+        val target = if (leg.isMetroOnly()) MetroRoutes.target(trip, i) else null
         val sec = if (c != null && target != null) {
             MetroRoutes.cached(ctx, c, target.second, target.third)?.durSec
         } else null
-        return sec?.let { (it + 59) / 60 } ?: leg.rideMin
+        return Learn.ride(ctx, trip, i, sec).minutes
     }
 
     /** 第一段公交在第几段（之前须有其他段；首段即为公交的行程由常规流程处理） */

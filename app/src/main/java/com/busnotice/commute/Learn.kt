@@ -112,7 +112,7 @@ object Learn {
         p.edit().putString(k, list.takeLast(10).joinToString(",")).apply()
     }
 
-    /** 攒够 3 次后用中位数，否则 null（用行程里手填的） */
+    /** 攒够 3 次后用中位数，否则 null */
     fun rideMin(ctx: Context, tripId: String, legIdx: Int): Int? {
         val l = (ctx.getSharedPreferences(RIDE, Context.MODE_PRIVATE).getString("$tripId#$legIdx", "") ?: "")
             .split(',').mapNotNull { it.trim().toIntOrNull() }
@@ -122,6 +122,33 @@ object Learn {
     fun rideSamples(ctx: Context, tripId: String, legIdx: Int): Int =
         (ctx.getSharedPreferences(RIDE, Context.MODE_PRIVATE).getString("$tripId#$legIdx", "") ?: "")
             .split(',').count { it.isNotBlank() }
+
+    /** 清空某段实测乘车时长，之后重新累计 */
+    fun resetRide(ctx: Context, tripId: String, legIdx: Int) {
+        ctx.getSharedPreferences(RIDE, Context.MODE_PRIVATE).edit().remove("$tripId#$legIdx").apply()
+    }
+
+    /** 每段最终乘车时长：一个值供界面显示、到站推算、出发建议统一使用 */
+    data class Ride(val minutes: Int, val source: Source) {
+        enum class Source { LEARNED, MANUAL, ESTIMATE, DEFAULT }
+    }
+
+    /** 实测中位数（可按半路行程比例缩放）> 手填 > 地铁按站数估算 > rideMin 兜底 */
+    fun resolve(learnedMin: Int?, leg: Leg, metroSec: Int?, learnScale: Double = 1.0): Ride {
+        if (learnedMin != null) {
+            return Ride((learnedMin * learnScale).toInt().coerceAtLeast(1), Ride.Source.LEARNED)
+        }
+        if (leg.rideMinManual) return Ride(leg.rideMin, Ride.Source.MANUAL)
+        if (metroSec != null) return Ride(((metroSec + 59) / 60).coerceIn(1, 120), Ride.Source.ESTIMATE)
+        return Ride(leg.rideMin, Ride.Source.DEFAULT)
+    }
+
+    fun ride(ctx: Context, trip: Trip, legIdx: Int, metroSec: Int? = null, learnScale: Double = 1.0): Ride =
+        resolve(rideMin(ctx, trip.id, legIdx), trip.legs[legIdx], metroSec, learnScale)
+
+    /** 编辑页等只有 tripId + 单段时用这个重载 */
+    fun ride(ctx: Context, tripId: String, legIdx: Int, leg: Leg, metroSec: Int? = null): Ride =
+        resolve(rideMin(ctx, tripId, legIdx), leg, metroSec)
 
     // ---------- 公交沿线平均车速（米/分钟，含停站）：每次按定位到了下车站，按沿线距离 / 用时更新 ----------
     private const val BUS_SPEED = "learn_bus_speed"

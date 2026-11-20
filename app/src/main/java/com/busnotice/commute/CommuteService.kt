@@ -319,25 +319,30 @@ class CommuteService : Service() {
         return START_STICKY
     }
 
+    /** 预取的站数估算只对当前行程有效（恢复其他行程时不串用） */
+    private fun metroSecOf(t: Trip, i: Int): Int? = if (t.id == trip.id) metroRideSec[i] else null
+
     private fun freshDeadline(t: Trip): Long =
-        System.currentTimeMillis() + (t.legs.sumOf { it.rideMin + it.transferWalkMin } + 50) * 60_000L
+        System.currentTimeMillis() +
+            (t.legs.indices.sumOf { Learn.ride(this, t, it, metroSecOf(t, it)).minutes + t.legs[it].transferWalkMin } + 50) * 60_000L
 
     private fun deadline(t: Trip, manual: Boolean): Long {
         val now = System.currentTimeMillis()
-        val rideTotal = t.legs.sumOf { it.rideMin + it.transferWalkMin } + 20
+        fun rideAndWalk(t: Trip, i: Int) = Learn.ride(this, t, i, metroSecOf(t, i)).minutes + t.legs[i].transferWalkMin
+        val rideTotal = t.legs.indices.sumOf { rideAndWalk(t, it) } + 20
         if (manual) return now + maxOf(MANUAL_RUN_MS, rideTotal * 60_000L)
         // 「离开某地才弹」：启动时刻不固定，从现在起留足整段路程
         if (t.leaveMode()) return now + (rideTotal + 30) * 60_000L
         val end = LocalDate.now().atStartOfDay().plusMinutes(t.endMinute.toLong() + 5)
         // 多段行程：给后面几段留出乘车时间
-        val extra = trip.legs.dropLast(1).sumOf { it.rideMin + 5 }
+        val extra = t.legs.indices.dropLast(1).sumOf { Learn.ride(this, t, it, metroSecOf(t, it)).minutes + 5 }
         return end.plusMinutes(extra.toLong()).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
     }
 
-    /** 这段大概坐多久：实测攒够 3 次用实测中位数；否则手填值；没手填就按地铁站数估算 */
+    /** 这段大概坐多久：实测中位数 > 手填 > 地铁按站数估算，统一走 Learn.ride */
     private fun rideMs(i: Int): Long {
-        Learn.rideMin(this, trip.id, i)?.let { return (it * 60_000L * (if (i == joinLeg) joinScale else 1.0)).toLong() }
-        return trip.legs[i].rideSec(metroRideSec[i]) * 1000L
+        val scale = if (i == joinLeg) joinScale else 1.0
+        return Learn.ride(this, trip, i, metroRideSec[i], scale).minutes * 60_000L
     }
 
     /** 地铁段按站数估的乘车秒数（每站约 2 分 20 秒，含停站） */
@@ -980,7 +985,8 @@ class CommuteService : Service() {
             LiveNotifier.alert(this, "现在出发 · 前往${c.stopName}", text, metro = true)
         }
         // 在公司多待一会：胶囊别在出发前就到期收起
-        val need = now + p.leaveSec * 1000L + trip.legs.sumOf { it.rideMin + it.transferWalkMin + 10 } * 60_000L
+        val need = now + p.leaveSec * 1000L +
+            trip.legs.indices.sumOf { Learn.ride(this, trip, it, metroRideSec[it]).minutes + trip.legs[it].transferWalkMin + 10 } * 60_000L
         if (need > deadlineAt) deadlineAt = need
         setPower(if (p.leaveSec < 300) Power.HIGH else Power.LOW)
         return when {
@@ -1166,9 +1172,9 @@ class CommuteService : Service() {
             (if (metro) d <= 700 else d <= 350 + minOf(loc?.accuracy ?: 0f, 50f))
         // 公交有新鲜沿线投影：过了倒数第二站（只剩 1 站）且离站 ≤ 600 米才算快到
         val busLast = !metro && bs != null && bs.stopsLeft <= 1 && d != null && d <= 600
-        // 地铁段既没站数、也没手填、也没实测时，乘车时间不可靠，先不按时间提醒下车
-        val etaKnown = !metro || metroRideSec[legIdx] != null ||
-            Learn.rideMin(this, trip.id, legIdx) != null || trip.legs[legIdx].rideMinManual
+        // 地铁段完全按默认值推算时，乘车时间不可靠，先不按时间提醒下车
+        val etaKnown = !metro ||
+            Learn.ride(this, trip, legIdx, metroRideSec[legIdx]).source != Learn.Ride.Source.DEFAULT
         // 按时间提醒「快到了」：有定位且离下车站 1.5 公里以上时不提醒（地铁里网络定位误差大，放宽精度）
         // 公交有新鲜定位时只信位置，不按倒计时（倒计时只在没定位时兜底）
         val timeUp = etaKnown && now >= eta - 90_000 && !freshFar &&
