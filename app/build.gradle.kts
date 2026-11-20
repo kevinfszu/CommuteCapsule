@@ -36,13 +36,15 @@ android {
     val fixedKs = envFile ?: repoKs.takeIf { it.exists() }
     if (fixedKs != null) {
         val fromRepo = fixedKs == repoKs
+        // 工作流里未配置的 Secret 会以空字符串传进来，不能当成「有值」：必须过滤掉再回退
+        fun envOr(name: String, def: String) = System.getenv(name)?.takeIf { it.isNotEmpty() } ?: def
         signingConfigs {
             create("fixed") {
                 storeFile = fixedKs
                 if (fromRepo) storeType = "PKCS12"   // 仓库内置的是 PKCS12；CI 注入的按 Java 默认类型读
-                storePassword = System.getenv("SIGNING_STORE_PASSWORD") ?: "commute2026"
-                keyAlias = System.getenv("SIGNING_KEY_ALIAS") ?: "commutecapsule"
-                keyPassword = System.getenv("SIGNING_KEY_PASSWORD") ?: "commute2026"
+                storePassword = envOr("SIGNING_STORE_PASSWORD", "commute2026")
+                keyAlias = envOr("SIGNING_KEY_ALIAS", "commutecapsule")
+                keyPassword = envOr("SIGNING_KEY_PASSWORD", "commute2026")
             }
         }
         buildTypes { debug { signingConfig = signingConfigs.getByName("fixed") } }
