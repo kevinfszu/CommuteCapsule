@@ -29,6 +29,7 @@ object NodeLog {
         val boardEstimateSec: Int = 180,
         /** 每段：enter 之后多少秒上车（由 [BoardEst] 按相位/间隔/实测算出） */
         val boardOffsetSec: List<Int> = emptyList(),
+        /** 下车比出站早多少秒；优先由实测中位数填充，样本不足时用编辑页预设 */
         val alightEstimateSec: Int = 120,
         val transferWalkSec: List<Int> = emptyList(),
         val rideSec: List<Int> = emptyList(),
@@ -127,7 +128,7 @@ object NodeLog {
 
     /**
      * 结束时补算缺失节点。只从已有锚点推导，不臆造；用户提前结束时不补算未来节点。
-     * 出站只来自刷卡或基站实测，从不使用下车时间反推；下车缺失时用「出站 − alightEstimateSec」倒推。
+     * 出站只来自刷卡或基站实测，从不使用下车时间反推；下车缺失时用「出站 − 实测差值」倒推（样本不足时用编辑页预设）。
      */
     fun resolve(trip: Trip, raw: List<Stamp>, a: Anchors, aborted: Boolean): List<Stamp> {
         val eff = effective(raw).toMutableMap()

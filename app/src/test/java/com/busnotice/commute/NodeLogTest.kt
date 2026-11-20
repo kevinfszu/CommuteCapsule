@@ -79,6 +79,19 @@ class NodeLogTest {
         assertEquals(Src.TAP, src(n, Kind.EXIT))
     }
 
+    @Test fun alightBackwardUsesProvidedLead() {
+        val raw = listOf(
+            Stamp(Kind.BOARD, 0, 1_200_000L, Src.TAP),
+            Stamp(Kind.EXIT, 0, 2_000_000L, Src.TAP),
+        )
+        val a = NodeLog.Anchors(
+            startedAt = 900_000L, now = 4_000_000L,
+            alightEstimateSec = 90, rideSec = listOf(600),
+        )
+        val n = NodeLog.resolve(metroTrip(10), raw, a, aborted = false)
+        assertEquals(1_910_000L, at(n, Kind.ALIGHT))
+    }
+
     @Test fun abortedDoesNotInventFuture() {
         val raw = listOf(Stamp(Kind.ENTER, 0, 1_000_000L, Src.TAP))
         val n = NodeLog.resolve(metroTrip(10), raw, anchors(), aborted = true)

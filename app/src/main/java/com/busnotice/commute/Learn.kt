@@ -235,6 +235,10 @@ object Learn {
     fun transferWalkSec(ctx: Context, tripId: String, legIdx: Int) =
         nodeSec(ctx, Metric.TRANSFER, "$tripId#$legIdx")
 
+    /** 最后一段：下车比出站早多少秒；样本不足返回 null，由预设兜底 */
+    fun exitWalkSec(ctx: Context, tripId: String, legIdx: Int) =
+        nodeSec(ctx, Metric.EXIT_WALK, "$tripId#$legIdx")
+
     fun lastWalkSec(ctx: Context, tripId: String) = nodeSec(ctx, Metric.LAST_WALK, tripId)
 
     fun reactSec(ctx: Context, tripId: String, legIdx: Int) = nodeSec(ctx, Metric.REACT, "$tripId#$legIdx")

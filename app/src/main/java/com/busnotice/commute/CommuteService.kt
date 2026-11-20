@@ -647,7 +647,9 @@ class CommuteService : Service() {
                     eff[NodeLog.NodeRef(NodeLog.Kind.ENTER, i)]?.at?.let { boardOffsetSec(i, it) }
                         ?: trip.boardEstimateSec
                 },
-                alightEstimateSec = trip.alightEstimateSec,
+                // 下车比出站早多少：优先用实测中位数，样本不足用编辑页预设
+                alightEstimateSec = Learn.exitWalkSec(this, trip.id, trip.legs.lastIndex)
+                    ?: trip.alightEstimateSec,
                 transferWalkSec = trip.legs.indices.map { transferWalkSecOf(it).coerceAtLeast(60) },
                 rideSec = trip.legs.indices.map { (rideMs(it) / 1000).toInt() },
                 lastWalkSec = Learn.lastWalkSec(this, trip.id)
