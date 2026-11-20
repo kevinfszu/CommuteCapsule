@@ -389,14 +389,15 @@ fun RecentRunCard(trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean) {
     androidx.compose.runtime.LaunchedEffect(nodes) { list = nodes }
     Column(Modifier.fillMaxWidth().board(dark).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("最近行程", color = Fuse.ink(dark), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            // 看板底色永远是深色，文字固定白色，不能跟随主题的 ink
+            Text("最近行程", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(8.dp))
-            Text(trip.name, color = Fuse.ink(dark).copy(alpha = 0.5f), fontSize = 12.sp, maxLines = 1,
+            Text(trip.name, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text("长按节点可补录", color = Fuse.ink(dark).copy(alpha = 0.35f), fontSize = 10.sp)
+            Text("长按节点可补录", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
         }
         NodeTimeline(
-            trip = trip, nodes = list, current = null, editable = true, dark = dark,
+            trip = trip, nodes = list, current = null, editable = true, dark = true,
             onTap = {},
             onLongPress = { ref, at ->
                 val next = list + NodeLog.Stamp(ref.kind, ref.leg, at, NodeLog.Src.BACKFILL)
