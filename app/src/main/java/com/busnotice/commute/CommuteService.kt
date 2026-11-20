@@ -463,6 +463,38 @@ class CommuteService : Service() {
         (if (t.id == trip.id) Learn.transferWalkSec(this, t.id, i)?.let { (it + 59) / 60 } else null)
             ?: t.legs[i].transferWalkMin
 
+    /**
+     * 过闸之后多久上车：有相位按排班推算，没有相位用 w + h/2；
+     * 实测等待由 [BoardEst] 按逆方差加权修正。两者都没有时退回用户手填值。
+     */
+    private fun boardOffsetSec(i: Int, enter: Long): Int {
+        val leg = trip.legs.getOrNull(i) ?: return trip.boardEstimateSec
+        val c = leg.candidates.firstOrNull { it.isMetro() } ?: return trip.boardEstimateSec
+        val at = java.time.Instant.ofEpochMilli(enter).atZone(java.time.ZoneId.systemDefault())
+        val sec = at.toLocalTime().toSecondOfDay()
+        val weekday = at.dayOfWeek.value <= 5
+        val bands = c.bandsFor(!weekday)
+        val peak = Decision.isPeakAt(sec / 60, weekday, bands)
+        val samples = Learn.waitSamples(this, trip.id, i)
+        val base = BoardEst.Input(
+            enter = enter,
+            headwaySec = Decision.headwayAt(sec / 60, weekday, bands),
+            offsetSec = Learn.metroOffsetSec(this, Learn.metroKey(c, peak)),
+            waitSamples = samples,
+            weekday = weekday,
+            bands = bands,
+            walkSec = BoardEst.walkFromWait(samples, Decision.headwayAt(sec / 60, weekday, bands))
+                ?: BoardEst.WALK_SEC,
+        )
+        // 同一段有多条线时，取能赶上的最早一班（与 nextTrainAfter 一致）
+        val dirs = metroDirs[dirKey(c)]?.filter { c.metroDir.isEmpty() || it.dest == c.metroDir }.orEmpty()
+        val r = dirs.mapNotNull { d ->
+            BoardEst.estimate(base.copy(firstMin = d.firstMin, lastMin = d.lastMin)).takeIf { it.phased }
+        }.minByOrNull { it.at } ?: BoardEst.estimate(base)
+        if (!r.phased && samples.isEmpty()) return trip.boardEstimateSec
+        return BoardEst.offsetSec(r, enter)
+    }
+
     /** 首页/通知动作：给当前节点打一个「现在」 */
     fun stampCurrentNode() {
         scope.launch(Dispatchers.Main) {
@@ -591,11 +623,15 @@ class CommuteService : Service() {
     private fun settleNodes(aborted: Boolean) {
         if (!::trip.isInitialized || nodeStartedAt <= 0L) return
         runCatching {
+            val raw = NodeLog.raw(this, trip.id, nodeStartedAt)
+            val eff = NodeLog.effective(raw)
             val anchors = NodeLog.Anchors(
                 startedAt = if (startedAt > 0L) startedAt else nodeStartedAt,
                 now = System.currentTimeMillis(),
-                boardEstimateSec = trip.legs.indices.firstNotNullOfOrNull { Learn.waitSec(this, trip.id, it) }
-                    ?: trip.boardEstimateSec,
+                boardOffsetSec = trip.legs.indices.map { i ->
+                    eff[NodeLog.NodeRef(NodeLog.Kind.ENTER, i)]?.at?.let { boardOffsetSec(i, it) }
+                        ?: trip.boardEstimateSec
+                },
                 alightEstimateSec = trip.alightEstimateSec,
                 transferWalkSec = trip.legs.indices.map { transferWalkSecOf(it).coerceAtLeast(60) },
                 rideSec = trip.legs.indices.map { (rideMs(it) / 1000).toInt() },
@@ -603,7 +639,7 @@ class CommuteService : Service() {
                 lastWalkSec = Learn.lastWalkSec(this, trip.id)
                     ?: WalkLearn.durationMedian(this, trip.id, "last") ?: 480,
             )
-            val nodes = NodeLog.resolve(trip, NodeLog.raw(this, trip.id, nodeStartedAt), anchors, aborted)
+            val nodes = NodeLog.resolve(trip, raw, anchors, aborted)
             learnNodes(nodes, aborted)
             NodeLog.saveLastRun(this, trip, nodes)
             TraceLog.event("nodes_settled", "n" to nodes.size, "aborted" to aborted)

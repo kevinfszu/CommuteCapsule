@@ -27,6 +27,8 @@ object NodeLog {
         val startedAt: Long,
         val now: Long,
         val boardEstimateSec: Int = 180,
+        /** 每段：enter 之后多少秒上车（由 [BoardEst] 按相位/间隔/实测算出） */
+        val boardOffsetSec: List<Int> = emptyList(),
         val alightEstimateSec: Int = 120,
         val transferWalkSec: List<Int> = emptyList(),
         val rideSec: List<Int> = emptyList(),
@@ -150,8 +152,10 @@ object NodeLog {
 
             if (!aborted && board == null) {
                 when {
-                    enter != null -> putIfMissing(
-                        Kind.BOARD, i, enter + a.boardEstimateSec * 1000L, enter, alight ?: exit
+                    !aborted && enter != null -> putIfMissing(
+                        Kind.BOARD, i,
+                        enter + (a.boardOffsetSec.getOrNull(i) ?: a.boardEstimateSec) * 1000L,
+                        enter, alight ?: exit,
                     )
                     i > 0 && get(Kind.ALIGHT, i - 1) != null -> {
                         val prev = get(Kind.ALIGHT, i - 1)!!

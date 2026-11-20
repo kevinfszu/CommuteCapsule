@@ -226,6 +226,9 @@ object Learn {
         return if (l.size < metric.minSamples) null else l.sorted()[l.size / 2]
     }
 
+    fun waitSamples(ctx: Context, tripId: String, legIdx: Int): List<Int> =
+        nodeEntries(ctx, Metric.WAIT, "$tripId#$legIdx").map { it.second }
+
     fun waitSec(ctx: Context, tripId: String, legIdx: Int) = nodeSec(ctx, Metric.WAIT, "$tripId#$legIdx")
 
     fun transferWalkSec(ctx: Context, tripId: String, legIdx: Int) =

@@ -167,13 +167,14 @@ fun TripEditor(
             }
             item {
                 Section("节点预估（没打卡时用）") {
-                    Stepper("进站后预计多久上车", trip.boardEstimateSec, 0, 900, unit = "秒") {
+                    Stepper("过闸后预计多久上车", trip.boardEstimateSec, 0, 900, unit = "秒") {
                         onChange(trip.copy(boardEstimateSec = it))
                     }
                     Stepper("终点下车比出站提前", trip.alightEstimateSec, 0, 900, unit = "秒") {
                         onChange(trip.copy(alightEstimateSec = it))
                     }
-                    Text("只用于行程结束后的推算，节点条上带「≈」标记，不参与学习。", fontSize = 12.sp, lineHeight = 17.sp, color = dim)
+                    Text("按刷卡过闸后算，不含安检和站外步行。有班次表时按发车间隔推算，这两项只在拿不到班次、也没有实测样本时兜底，不参与学习。",
+                        fontSize = 12.sp, lineHeight = 17.sp, color = dim)
                 }
             }
             item {
