@@ -148,7 +148,7 @@ object NodeLog {
             val alight = get(Kind.ALIGHT, i)
             val exit = get(Kind.EXIT, i)
 
-            if (board == null) {
+            if (!aborted && board == null) {
                 when {
                     enter != null -> putIfMissing(
                         Kind.BOARD, i, enter + a.boardEstimateSec * 1000L, enter, alight ?: exit
@@ -164,16 +164,17 @@ object NodeLog {
             }
 
             if (alight == null) {
+                val b = get(Kind.BOARD, i)
                 when {
                     !aborted && metro && exit != null -> putIfMissing(
-                        Kind.ALIGHT, i, exit - a.alightEstimateSec * 1000L, board ?: enter, exit
+                        Kind.ALIGHT, i, exit - a.alightEstimateSec * 1000L, b ?: enter, exit
                     )
                     i + 1 < trip.legs.size && get(Kind.BOARD, i + 1) != null -> {
                         val next = get(Kind.BOARD, i + 1)!!
-                        putIfMissing(Kind.ALIGHT, i, next - walk(a, i + 1) * 1000L, board ?: enter, next)
+                        putIfMissing(Kind.ALIGHT, i, next - walk(a, i + 1) * 1000L, b ?: enter, next)
                     }
-                    board != null && ride(a, i) > 0 -> putIfMissing(
-                        Kind.ALIGHT, i, board + ride(a, i) * 1000L, board, exit
+                    b != null && ride(a, i) > 0 -> putIfMissing(
+                        Kind.ALIGHT, i, b + ride(a, i) * 1000L, b, exit
                     )
                 }
             }
