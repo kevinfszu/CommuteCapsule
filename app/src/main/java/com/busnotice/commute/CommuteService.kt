@@ -553,7 +553,7 @@ class CommuteService : Service() {
                     markAlight(now, "user")
                     // 地铁：下车不等于出站，还在站内，等刷卡/基站出站后才结束
                     if (trip.legs[legIdx].isMetroOnly()) {
-                        Diag.mark(this, "已确认下车，还在站内，等待出站")
+                        Diag.mark(this@CommuteService, "已确认下车，还在站内，等待出站")
                     } else {
                         arrived = true
                         endTrip("ack")
