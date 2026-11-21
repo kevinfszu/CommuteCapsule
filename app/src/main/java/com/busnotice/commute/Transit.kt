@@ -123,7 +123,6 @@ object NoSource : StaticSource {
 object Transit {
     private const val PREFS = "transit"
     private const val KEY_REGION = "region"
-    private const val KEY_DATA_URL = "data_url"
     private const val KEY_AMAP_KEY = "amap_key"
     private const val KEY_AMAP_CITY = "amap_city"
 
@@ -169,17 +168,6 @@ object Transit {
     fun setRegion(ctx: Context, r: String) {
         region = r.trim()
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_REGION, region).apply()
-    }
-
-    /** 上次用的数据地址；没保存过时用构建期注入的默认值 */
-    fun dataUrl(): String =
-        appContextOrNull()?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            ?.getString(KEY_DATA_URL, null)
-            ?.takeIf { it.isNotBlank() }
-            ?: BuildConfig.TRANSIT_DATA_URL
-
-    fun setDataUrl(ctx: Context, url: String) {
-        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_DATA_URL, url.trim()).apply()
     }
 
     /** 用户自己提供的高德 Web 服务 Key（只存本机，用于 App 内生成数据源） */

@@ -19,6 +19,9 @@ object ImportedJsonSource : StaticSource {
     val hasData: Boolean get() = doc != null
     val lineCount: Int get() = doc?.lineCount ?: 0
     val stationCount: Int get() = doc?.stationCount ?: 0
+
+    /** 已导入的线路名（正反方向合并为一条） */
+    val lineNames: List<String> get() = doc?.lines?.map { it.name }?.distinct() ?: emptyList()
     val meta: JsonTransit.Meta? get() = doc?.let { JsonTransit.Meta(it.source, it.updated, it.note) }
 
     override val id = "imported"

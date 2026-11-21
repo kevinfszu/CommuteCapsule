@@ -3,12 +3,17 @@ package com.busnotice.commute.ui
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -18,12 +23,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.busnotice.commute.ImportedJsonSource
-import com.busnotice.commute.RemoteTransit
 import com.busnotice.commute.Transit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,9 +46,9 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
     var version by remember { mutableStateOf(0) }
     var importing by remember { mutableStateOf(false) }
     var amapOpen by remember { mutableStateOf(false) }
-    var dataUrl by remember { mutableStateOf(Transit.dataUrl()) }
     val sourceTitle = remember(version) { Transit.static.title }
     val hasImport = remember(version) { ImportedJsonSource.hasData }
+    val lineNames = remember(version) { ImportedJsonSource.lineNames }
     val meta = remember(version) { ImportedJsonSource.meta }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -80,6 +87,24 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
             ) {
                 Text("线路和站点：$sourceTitle", fontSize = 14.sp)
                 Text("实时到站：${Transit.realtime?.title ?: "无（使用学习到的时刻表与估算数据）"}", fontSize = 14.sp)
+                if (hasImport) {
+                    SectionLabel("已导入的线路（${lineNames.size} 条）")
+                    Column(
+                        Modifier.fillMaxWidth().heightIn(max = 168.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        lineNames.forEach { name ->
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                    .background(Fuse.ink(dark).copy(alpha = 0.05f))
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = ink)
+                            }
+                        }
+                    }
+                }
                 GlassField(
                     region, { region = it }, label = "区域编号",
                     supportingText = { Text("数据源自带的城市编号，仅在更换城市时修改") },
@@ -96,37 +121,6 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                     enabled = !importing,
                     secondary = true,
                 ) { Text("用高德查询并生成") }
-                GlassField(
-                    dataUrl, { dataUrl = it }, label = "数据地址",
-                    supportingText = { Text("返回 JSON 的 http/https 地址，导入成功后将自动保存") },
-                    singleLine = true,
-                )
-                PillButton(
-                    onClick = {
-                        importing = true
-                        scope.launch {
-                            val result = withContext(Dispatchers.IO) {
-                                runCatching {
-                                    val text = RemoteTransit.fetch(dataUrl)
-                                    Transit.importJson(ctx, text).also { Transit.setDataUrl(ctx, dataUrl) }
-                                }
-                            }
-                            importing = false
-                            result.onSuccess {
-                                version++
-                                region = Transit.region
-                                Toast.makeText(
-                                    ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG,
-                                ).show()
-                            }.onFailure {
-                                Toast.makeText(ctx, "导入失败：${it.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !importing && dataUrl.isNotBlank(),
-                    secondary = true,
-                ) { Text(if (importing) "导入中…" else "从链接导入") }
                 if (meta != null) {
                     if (meta.source.isNotBlank()) Text(
                         "数据：${meta.source}" + (if (meta.updated.isNotBlank()) "（${meta.updated}）" else ""),
