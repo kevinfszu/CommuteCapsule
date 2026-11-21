@@ -124,6 +124,8 @@ object Transit {
     private const val PREFS = "transit"
     private const val KEY_REGION = "region"
     private const val KEY_DATA_URL = "data_url"
+    private const val KEY_AMAP_KEY = "amap_key"
+    private const val KEY_AMAP_CITY = "amap_city"
 
     /** 可选扩展入口（src/extra 里的 object Extras { val sources: List<Any> }），没有就跳过 */
     private const val EXTRAS = "com.busnotice.commute.extra.Extras"
@@ -178,6 +180,24 @@ object Transit {
 
     fun setDataUrl(ctx: Context, url: String) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_DATA_URL, url.trim()).apply()
+    }
+
+    /** 用户自己提供的高德 Web 服务 Key（只存本机，用于 App 内生成数据源） */
+    fun amapKey(): String = appContextOrNull()
+        ?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        ?.getString(KEY_AMAP_KEY, "").orEmpty()
+
+    fun setAmapKey(ctx: Context, key: String) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_AMAP_KEY, key.trim()).apply()
+    }
+
+    /** 高德查询用的城市名或 adcode，如「广州」「440100」 */
+    fun amapCity(): String = appContextOrNull()
+        ?.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        ?.getString(KEY_AMAP_CITY, "").orEmpty()
+
+    fun setAmapCity(ctx: Context, city: String) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_AMAP_CITY, city.trim()).apply()
     }
 
     private fun appContextOrNull(): Context? = if (::appContext.isInitialized) appContext else null

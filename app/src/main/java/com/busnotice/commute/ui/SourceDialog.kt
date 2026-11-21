@@ -38,6 +38,7 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
     var region by remember { mutableStateOf(Transit.region) }
     var version by remember { mutableStateOf(0) }
     var importing by remember { mutableStateOf(false) }
+    var amapOpen by remember { mutableStateOf(false) }
     var dataUrl by remember { mutableStateOf(Transit.dataUrl()) }
     val sourceTitle = remember(version) { Transit.static.title }
     val hasImport = remember(version) { ImportedJsonSource.hasData }
@@ -89,6 +90,12 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                     enabled = !importing,
                     secondary = true,
                 ) { Text(if (importing) "导入中…" else "导入 JSON 文件") }
+                PillButton(
+                    onClick = { amapOpen = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !importing,
+                    secondary = true,
+                ) { Text("用高德查询并生成") }
                 GlassField(
                     dataUrl, { dataUrl = it }, label = "数据地址",
                     supportingText = { Text("返回 JSON 的 http/https 地址，导入成功后将自动保存") },
@@ -155,4 +162,16 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
             })
         },
     )
+
+    if (amapOpen) {
+        AmapImportDialog(
+            dark = dark,
+            onDismiss = { amapOpen = false },
+            onImported = {
+                amapOpen = false
+                version++
+                region = Transit.region
+            },
+        )
+    }
 }

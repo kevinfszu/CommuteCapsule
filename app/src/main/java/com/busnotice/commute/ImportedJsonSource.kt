@@ -65,6 +65,11 @@ object ImportedJsonSource : StaticSource {
         Unit
     }
 
+    /** 已落盘的原始 JSON（合并新线路时用）；没有导入过返回 null */
+    fun rawText(ctx: Context): String? = runCatching {
+        File(ctx.filesDir, FILE).takeIf { it.exists() }?.readText()
+    }.getOrNull()
+
     override fun search(key: String, region: String): SearchResult =
         doc?.let { JsonTransit.search(it, key, region) } ?: SearchResult(emptyList(), emptyList())
 
