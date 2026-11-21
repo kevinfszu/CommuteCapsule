@@ -3,6 +3,7 @@
 package com.busnotice.commute.ui
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.size
@@ -205,6 +206,16 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
     var nearbyError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = stage != BusStage.Lines) {
+        stage = when (val st = stage) {
+            is BusStage.Confirm -> st.back
+            is BusStage.Alight -> st.back
+            is BusStage.Station -> BusStage.Lines
+            is BusStage.Line -> BusStage.Lines
+            BusStage.Lines -> BusStage.Lines
+        }
+    }
+
     LaunchedEffect(Unit) {
         val loc = Loc.current(ctx)
         if (loc == null) {
@@ -240,6 +251,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                 lineId = d.lineId, stationId = b.stopId, lastStop = d.lastStop, stopIndex = b.order,
                 alightName = a?.name.orEmpty(),
                 alightLat = a?.lat ?: Double.NaN, alightLng = a?.lng ?: Double.NaN,
+                colorHex = d.colorHex,
             )
         ), rideMin)
     }
@@ -475,6 +487,15 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
     var headway by remember { mutableStateOf(300) }
     var offPeak by remember { mutableStateOf(540) }
 
+    BackHandler(enabled = stage != MetroStage.Lines) {
+        stage = when (val st = stage) {
+            is MetroStage.Alight -> st.back
+            is MetroStage.Station -> MetroStage.Line(st.line, st.dirIndex, "")
+            is MetroStage.Line -> MetroStage.Lines
+            MetroStage.Lines -> MetroStage.Lines
+        }
+    }
+
     LaunchedEffect(Unit) {
         val all = withContext(Dispatchers.IO) { runCatching { Transit.lines() }.getOrNull() }
         metroLines = all?.filter { it.isSubway }
@@ -663,6 +684,7 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                         alightLng = s.alight?.lng ?: Double.NaN,
                                         weekdayBands = if (bands.isEmpty()) manual else bands,
                                         weekendBands = if (bands.isEmpty()) manual else weekendBands,
+                                        colorHex = sel?.colorHex.orEmpty(),
                                     ), if (s.alight != null) s.rideMin else 0)
                                 }, modifier = Modifier.fillMaxWidth()) { Text("添加", fontWeight = FontWeight.Bold) }
                         }
@@ -754,6 +776,8 @@ fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -
     var query by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<List<SearchStation>?>(null) }
     var pickDep by remember { mutableStateOf(false) }
+
+    BackHandler { onBack() }
 
     LaunchedEffect(query) {
         val q = query.trim()

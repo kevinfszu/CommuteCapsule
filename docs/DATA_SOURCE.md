@@ -71,6 +71,7 @@
 | `lines[].reverseId` | 否 | 反方向线路的 `id` |
 | `lines[].first` / `last` | 否 | 该方向**始发站**的首末班，`"HH:mm"`，默认 `06:00` / `23:00`；其他站按站序推算 |
 | `lines[].hopSec` | 否 | 单站用时（秒），默认地铁 140、其他 90，限制 20–900 |
+| `lines[].color` | 否 | 线路色，6 位十六进制（如 `F9BE58`），可带 `#`；也接受高德原始字段名 `uicolor`。省略时按线路号取本地调色板 |
 | `lines[].service.weekday` | 否 | 工作日分时段间隔数组，见下文 |
 | `lines[].service.weekend` | 否 | 周末分时段间隔数组；省略时复制 `weekday` |
 | `lines[].stops[].name` | 是 | 站名 |

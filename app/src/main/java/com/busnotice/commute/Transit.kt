@@ -43,6 +43,7 @@ data class LineDetail(
     val lineId: String, val name: String, val firstStop: String, val lastStop: String,
     val stations: List<StopPoint>, val reverseLineId: String,
     val hopSec: Int = 0,   // 平均每站用时；0 = 数据源没提供，界面用回退值
+    val colorHex: String = "",   // 数据源自带的线路色（如高德 uicolor），空 = 界面按线路号取色
 )
 
 data class BusEta(
@@ -62,6 +63,7 @@ data class SubwayDir(
     val dirId: String = "", val order: Int = -1,   // 该方向的编号、本站是这个方向的第几站
     val weekdayBands: List<HeadwayBand> = emptyList(),
     val weekendBands: List<HeadwayBand> = emptyList(),
+    val colorHex: String = "",
 )
 
 data class MetroStation(val name: String, val lat: Double, val lng: Double)
@@ -157,6 +159,7 @@ object Transit {
                 if (r.isNotEmpty()) sp.edit().putString(KEY_REGION, r).apply()
             }
             region = r
+            clearColorCache()
             inited = true
         }
     }
@@ -184,6 +187,7 @@ object Transit {
         val doc = ImportedJsonSource.import(ctx, text)
         static = ImportedJsonSource
         realtime = null
+        clearColorCache()
         MetroRoutes.clear(ctx)
         if (region.isEmpty() && doc.region.isNotEmpty()) setRegion(ctx, doc.region)
         ImportSummary(doc.lineCount, doc.stationCount)
@@ -193,6 +197,7 @@ object Transit {
     fun clearImported(ctx: Context) {
         synchronized(this) {
             ImportedJsonSource.clear(ctx)
+            clearColorCache()
             MetroRoutes.clear(ctx)
             static = NoSource
             realtime = null
@@ -218,6 +223,27 @@ object Transit {
     }
 
     val hasRealtime get() = realtime != null
+
+    /** 线路名 → 数据源自带的线路色（高德 uicolor）。查不到缓存空串，避免反复全表扫描 */
+    private val colorCache = HashMap<String, String>()
+
+    fun colorOf(name: String): String {
+        val key = name.trim()
+        if (key.isEmpty()) return ""
+        synchronized(colorCache) {
+            colorCache[key]?.let { return it }
+            val hex = runCatching {
+                val hit = static.search(key, reg("")).lines.firstOrNull { it.name == key }
+                    ?: return@runCatching ""
+                hit.dirs.firstNotNullOfOrNull { dir -> static.lineDetail(dir.lineId, reg("")).colorHex.ifEmpty { null } }
+                    .orEmpty()
+            }.getOrDefault("")
+            colorCache[key] = hex
+            return hex
+        }
+    }
+
+    private fun clearColorCache() = synchronized(colorCache) { colorCache.clear() }
 
     private fun reg(r: String) = r.ifEmpty { region }
 

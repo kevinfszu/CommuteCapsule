@@ -3,10 +3,12 @@
 package com.busnotice.commute.ui
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,8 +25,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -59,6 +63,8 @@ import com.busnotice.commute.SubwayDir
 import com.busnotice.commute.Learn
 import com.busnotice.commute.MetroRoutes
 import com.busnotice.commute.Loc
+import com.busnotice.commute.Geocode
+import com.busnotice.commute.Places
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.LaunchedEffect
@@ -92,6 +98,8 @@ fun hhmm(min: Int) = "%02d:%02d".format(min / 60, min % 60)
 @Composable
 fun TripEditor(
     trip: Trip,
+    dirty: Boolean,
+    state: LazyListState = rememberLazyListState(),
     onChange: (Trip) -> Unit,
     onBack: () -> Unit,
     onSaved: () -> Unit,
@@ -106,16 +114,47 @@ fun TripEditor(
 
     fun updateLeg(i: Int, leg: Leg) = onChange(trip.copy(legs = trip.legs.toMutableList().also { it[i] = leg }))
 
+    // 定位 + 反查地址：家/公司优先，其次街道名，都拿不到就只存坐标
+    fun locate(radius: Int) {
+        if (locating) return
+        locating = true
+        scope.launch {
+            val l = Loc.current(ctx)
+            if (l == null) {
+                locating = false
+                Toast.makeText(ctx, "定位失败，请到达出发地后重试", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+            val name = Places.nearestLabel(ctx, l.latitude, l.longitude) ?: Geocode.nameOf(ctx, l.latitude, l.longitude)
+            locating = false
+            onChange(trip.copy(leaveLat = l.latitude, leaveLng = l.longitude, leaveRadiusM = radius, leaveName = name.orEmpty()))
+        }
+    }
+
+    // 老数据只有坐标没有名称：进入页面时反查一次，仅用于展示（不改草稿，保存时才落库）
+    var leaveAddr by remember { mutableStateOf("") }
+    LaunchedEffect(trip.leaveLat, trip.leaveLng, trip.leaveName) {
+        leaveAddr = if (!trip.leaveLat.isNaN() &&
+            (trip.leaveName.isEmpty() || trip.leaveName == "家" || trip.leaveName == "公司")
+        ) Geocode.nameOf(ctx, trip.leaveLat, trip.leaveLng).orEmpty() else ""
+    }
+
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
     val dim = Fuse.dim(dark)
+    var confirmLeave by remember { mutableStateOf(false) }
+    fun requestBack() { if (dirty) confirmLeave = true else onBack() }
+    BackHandler { requestBack() }
     GlassPage(
         title = if (TripStore.get(ctx, trip.id) == null) "新建行程" else "编辑行程",
-        onBack = onBack,
+        onBack = ::requestBack,
+        state = state,
         actions = {
             PillButton(onClick = {
                 val legs = trip.legs.filter { it.candidates.isNotEmpty() }
-                if (legs.isEmpty()) {
+                if (!trip.chinaWorkday && trip.dayMask == 0) {
+                    Toast.makeText(ctx, "请至少选择一个生效日", Toast.LENGTH_SHORT).show()
+                } else if (legs.isEmpty()) {
                     Toast.makeText(ctx, "请至少添加一条线路", Toast.LENGTH_SHORT).show()
                 } else {
                     val t = trip.copy(legs = legs)
@@ -129,29 +168,6 @@ fun TripEditor(
                     value = trip.name, onValueChange = { onChange(trip.copy(name = it)) },
                     label = "名称", singleLine = true, modifier = Modifier.fillMaxWidth(),
                 )
-            }
-            item {
-                Section("生效日期") {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        DAY_NAMES.forEachIndexed { i, n ->
-                            val on = !trip.chinaWorkday && trip.dayMask and (1 shl i) != 0
-                            GlassChip(selected = on, onClick = {
-                                onChange(trip.copy(chinaWorkday = false, dayMask = trip.dayMask xor (1 shl i)))
-                            }, label = n, modifier = Modifier.widthIn(min = 44.dp))
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        GlassChip(selected = trip.chinaWorkday, onClick = {
-                            onChange(trip.copy(chinaWorkday = !trip.chinaWorkday))
-                        }, label = "法定工作日")
-                    }
-                    if (trip.chinaWorkday) {
-                        Spacer(Modifier.height(6.dp))
-                        Text("自动跳过法定节假日，调休工作日同样提醒。首次使用时联网获取当年安排，此后离线可用；获取失败时按周一至周五处理。",
-                            fontSize = 12.sp, lineHeight = 17.sp, color = dim)
-                    }
-                }
             }
             item {
                 Section("通勤时间范围") {
@@ -172,15 +188,29 @@ fun TripEditor(
                 }
             }
             item {
-                Section("节点预估（没打卡时用）") {
-                    Stepper("过闸后预计多久上车", trip.boardEstimateSec, 0, 900, unit = "秒") {
-                        onChange(trip.copy(boardEstimateSec = it))
+                Section("生效日期") {
+                    // 两种重复方式互斥：默认值（法定工作日）排第一，再选具体日期
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        GlassChip(selected = trip.chinaWorkday, onClick = {
+                            onChange(trip.copy(chinaWorkday = true))
+                        }, label = "法定工作日", modifier = Modifier.weight(1f), minTouch = false)
+                        GlassChip(selected = !trip.chinaWorkday, onClick = {
+                            onChange(trip.copy(chinaWorkday = false, dayMask = trip.dayMask.takeIf { it != 0 } ?: 0b0011111))
+                        }, label = "每周", modifier = Modifier.weight(1f), minTouch = false)
                     }
-                    Stepper("终点下车比出站提前", trip.alightEstimateSec, 0, 900, unit = "秒") {
-                        onChange(trip.copy(alightEstimateSec = it))
+                    Spacer(Modifier.height(10.dp))
+                    if (!trip.chinaWorkday) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            DAY_NAMES.forEachIndexed { i, n ->
+                                val on = trip.dayMask and (1 shl i) != 0
+                                GlassChip(selected = on, onClick = {
+                                    onChange(trip.copy(dayMask = trip.dayMask xor (1 shl i)))
+                                }, label = n, modifier = Modifier.weight(1f), minTouch = false)
+                            }
+                        }
+                    } else {
+                        Text("自动跳过法定节假日（含调休）", fontSize = 12.sp, color = dim)
                     }
-                    Text("「过闸后预计多久上车」用于没打卡时的上车推算，推算值也会计入学习样本。出站时间永远以刷卡为准；「终点下车比出站提前」只在忘记下车打卡时，用出站时间倒推下车，学到实际差值后会优先用实际值。推算值带「≈」标记。",
-                        fontSize = 12.sp, lineHeight = 17.sp, color = dim)
                 }
             }
             item {
@@ -190,38 +220,45 @@ fun TripEditor(
                             label = "按时间唤起")
                         GlassChip(selected = trip.leaveMode(), onClick = {
                             if (!trip.leaveLat.isNaN()) onChange(trip.copy(leaveRadiusM = trip.leaveRadiusM.takeIf { it > 0 } ?: 300))
-                            else if (!locating) {
-                                locating = true
-                                scope.launch {
-                                    val l = Loc.current(ctx); locating = false
-                                    if (l == null) Toast.makeText(ctx, "定位失败，请到达出发地后重试", Toast.LENGTH_SHORT).show()
-                                    else onChange(trip.copy(leaveLat = l.latitude, leaveLng = l.longitude, leaveRadiusM = 300))
-                                }
-                            }
+                            else locate(300)
                         }, label = if (locating) "定位中…" else "离开出发地后唤起")
                     }
                     Spacer(Modifier.height(8.dp))
                     if (trip.leaveMode()) {
                         Text("时间范围内每 2 分钟进行一次粗略定位，离开设定范围后自动唤起。适用于下班时间不固定的情况，可将时间范围放宽，例如 17:30 至 22:00。",
                             fontSize = 12.sp, lineHeight = 17.sp, color = dim)
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
+                        val main = trip.leaveName.ifEmpty { leaveAddr.ifEmpty { "已设置" } }
+                        val sub = if (trip.leaveName == "家" || trip.leaveName == "公司")
+                            listOfNotNull(leaveAddr.takeIf { it.isNotEmpty() }, "触发半径 ${trip.leaveRadiusM} 米").joinToString(" · ")
+                        else "触发半径 ${trip.leaveRadiusM} 米"
+                        Row(
+                            Modifier.fillMaxWidth().clip(FieldShape)
+                                .background(Color.White.copy(alpha = if (dark) 0.08f else 0.5f))
+                                .border(1.dp, if (dark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f), FieldShape)
+                                .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("出发地", fontSize = 12.sp, color = dim)
+                                Spacer(Modifier.height(3.dp))
+                                Text(main, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink)
+                                Spacer(Modifier.height(2.dp))
+                                Text(sub, fontSize = 12.sp, color = dim)
+                            }
+                            TextButton(onClick = { if (!locating) locate(if (trip.leaveRadiusM > 0) trip.leaveRadiusM else 300) }) {
+                                Text(if (locating) "定位中…" else "重新定位", fontSize = 13.sp, color = ink)
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text("触发半径", fontSize = 13.sp, color = dim)
+                        Spacer(Modifier.height(6.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             listOf(100, 150, 200, 300).forEach { r ->
                                 GlassChip(selected = trip.leaveRadiusM == r, onClick = { onChange(trip.copy(leaveRadiusM = r)) },
                                     label = "$r 米")
                             }
                         }
-                        Spacer(Modifier.height(10.dp))
-                        PillButton(secondary = true, onClick = {
-                            if (!locating) {
-                                locating = true
-                                scope.launch {
-                                    val l = Loc.current(ctx); locating = false
-                                    if (l == null) Toast.makeText(ctx, "定位失败", Toast.LENGTH_SHORT).show()
-                                    else { onChange(trip.copy(leaveLat = l.latitude, leaveLng = l.longitude)); Toast.makeText(ctx, "已将当前位置设为出发地", Toast.LENGTH_SHORT).show() }
-                                }
-                            }
-                        }) { Text("将当前位置设为出发地") }
                     } else {
                         Text("下班时间不固定时，请选择「离开出发地后唤起」并设置一次出发地；也可将「通勤胶囊」添加至快捷开关，出发时手动触发。",
                             fontSize = 12.sp, lineHeight = 17.sp, color = dim)
@@ -251,10 +288,49 @@ fun TripEditor(
                 )
             }
             item {
+                // 估算值只影响没打卡时的推算，默认收起，避免干扰「设一次就不用管」的主流程
+                var estimatesOpen by remember { mutableStateOf(false) }
+                GlassCard {
+                    Row(
+                        Modifier.fillMaxWidth().clickable { estimatesOpen = !estimatesOpen },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        SectionLabel("节点预估（没打卡时用）", Modifier.weight(1f))
+                        Text(
+                            if (estimatesOpen) "收起"
+                            else "上车 +${trip.boardEstimateSec} 秒 · 下车 −${trip.alightEstimateSec} 秒",
+                            fontSize = 12.sp, color = dim,
+                        )
+                    }
+                    if (estimatesOpen) {
+                        Spacer(Modifier.height(10.dp))
+                        Stepper("过闸后预计多久上车", trip.boardEstimateSec, 0, 900, unit = "秒") {
+                            onChange(trip.copy(boardEstimateSec = it))
+                        }
+                        Stepper("终点下车比出站提前", trip.alightEstimateSec, 0, 900, unit = "秒") {
+                            onChange(trip.copy(alightEstimateSec = it))
+                        }
+                        Text("「过闸后预计多久上车」用于没打卡时的上车推算，推算值也会计入学习样本。出站时间永远以刷卡为准；「终点下车比出站提前」只在忘记下车打卡时，用出站时间倒推下车，学到实际差值后会优先用实际值。推算值带「≈」标记。",
+                            fontSize = 12.sp, lineHeight = 17.sp, color = dim)
+                    }
+                }
+            }
+            item {
                 PillButton(secondary = true, onClick = { onChange(trip.copy(legs = trip.legs + Leg(emptyList()))) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("添加换乘段")
                 }
             }
+    }
+
+    if (confirmLeave) {
+        AlertDialog(
+            onDismissRequest = { confirmLeave = false },
+            shape = DialogShape, containerColor = Fuse.surface(dark), titleContentColor = ink, textContentColor = ink,
+            title = { Text("放弃未保存的修改？") },
+            text = { Text("离开后本次修改不会保留。") },
+            confirmButton = { DialogButton("放弃修改", danger = true, onClick = { confirmLeave = false; onBack() }) },
+            dismissButton = { DialogButton("继续编辑", onClick = { confirmLeave = false }) },
+        )
     }
 
     pickTime?.let { which ->
@@ -306,6 +382,7 @@ private fun LegCard(
     onAddBus: () -> Unit, onAddMetro: () -> Unit, onAddShuttle: () -> Unit, onEditShuttle: (Int) -> Unit,
 ) {
     var editing by remember { mutableStateOf<Int?>(null) }
+    var confirmRemove by remember { mutableStateOf(false) }
     editing?.let { ci ->
         leg.candidates.getOrNull(ci)?.let { c ->
             CandidateDialog(c, onDismiss = { editing = null }) { nc ->
@@ -316,11 +393,21 @@ private fun LegCard(
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
     val dim = Fuse.dim(dark)
+    if (confirmRemove) {
+        AlertDialog(
+            onDismissRequest = { confirmRemove = false },
+            shape = DialogShape, containerColor = Fuse.surface(dark), titleContentColor = ink, textContentColor = ink,
+            title = { Text("删除第 ${index + 1} 段？") },
+            text = { Text("该段线路与学习到的时长会一并移除。") },
+            confirmButton = { DialogButton("删除", danger = true, onClick = { confirmRemove = false; onRemove() }) },
+            dismissButton = { DialogButton("取消", onClick = { confirmRemove = false }) },
+        )
+    }
     GlassCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("第 ${index + 1} 段", fontSize = 17.sp, fontWeight = FontWeight.Bold, color = ink,
                     modifier = Modifier.weight(1f))
-                IconButton(onClick = onRemove) { Icon(Icons.Default.Delete, "删除该段", tint = dim) }
+                IconButton(onClick = { confirmRemove = true }) { Icon(Icons.Default.Delete, "删除该段", tint = dim) }
             }
             if (index > 0) {
                 Stepper("自上一段下车后步行", leg.transferWalkMin, 0, 30) { onChange(leg.copy(transferWalkMin = it)) }
@@ -350,37 +437,65 @@ private fun LegCard(
                 ) {
                     leg.candidates.forEachIndexed { ci, c ->
                         if (ci > 0) HorizontalDivider(Modifier.padding(start = 12.dp), thickness = 1.dp, color = Fuse.hairline(dark))
-                        Row(
+                        Column(
                             Modifier.fillMaxWidth()
                                 .clickable { if (c.type == Candidate.Type.SHUTTLE) onEditShuttle(ci) else editing = ci }
-                                .padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                                .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 10.dp),
                         ) {
-                            LineBadge(shortLine(c.name.ifEmpty { c.label() }), lineColor(c))
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(c.label() + when (c.type) {
-                                    Candidate.Type.BUS -> "  开往 ${c.lastStop}"
-                                    Candidate.Type.SHUTTLE -> "  通勤班车"
-                                    Candidate.Type.METRO -> "  地铁"
-                                }, fontSize = 15.sp, color = ink)
-                                Text(
-                                    "${c.stopName} 上车" + (if (c.alightName.isNotEmpty()) " · ${c.alightName} 下车" else "") +
-                                        when (c.type) {
-                                            Candidate.Type.SHUTTLE -> " · " + c.departures.sorted().joinToString(" ") { hhmm(it) }
-                                            Candidate.Type.METRO -> (if (c.metroDir.isNotEmpty()) " · 往${c.metroDir}" else "") +
-                                                " · " + c.scheduleText()
-                                            else -> ""
-                                        },
-                                    fontSize = 12.sp, lineHeight = 16.sp, color = dim,
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                LineBadge(shortLine(c.name.ifEmpty { c.label() }), lineColor(c))
+                                Spacer(Modifier.width(8.dp))
+                                Text(c.label(), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ink)
+                                Spacer(Modifier.width(6.dp))
+                                ModeTag(
+                                    when (c.type) {
+                                        Candidate.Type.BUS -> "公交"
+                                        Candidate.Type.SHUTTLE -> "班车"
+                                        Candidate.Type.METRO -> "地铁"
+                                    },
+                                    dark,
                                 )
+                                Spacer(Modifier.weight(1f))
+                                TextButton(
+                                    onClick = { if (c.type == Candidate.Type.SHUTTLE) onEditShuttle(ci) else editing = ci },
+                                    modifier = Modifier.height(40.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp),
+                                ) { Text("编辑", fontSize = 13.sp, color = ink) }
+                                IconButton(
+                                    onClick = {
+                                        onChange(leg.copy(candidates = leg.candidates.toMutableList().also { it.removeAt(ci) }))
+                                    },
+                                    modifier = Modifier.size(40.dp),
+                                ) { Icon(Icons.Default.Close, "移除", Modifier.size(18.dp), tint = dim) }
                             }
-                            TextButton(onClick = { if (c.type == Candidate.Type.SHUTTLE) onEditShuttle(ci) else editing = ci }) {
-                                Text("编辑", color = ink)
+                            Spacer(Modifier.height(5.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(c.stopName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink)
+                                if (c.alightName.isNotEmpty()) {
+                                    Text(" → ", fontSize = 14.sp, color = dim)
+                                    Text(c.alightName, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = ink)
+                                } else {
+                                    Text("  上车", fontSize = 12.sp, color = dim)
+                                }
                             }
-                            IconButton(onClick = {
-                                onChange(leg.copy(candidates = leg.candidates.toMutableList().also { it.removeAt(ci) }))
-                            }) { Icon(Icons.Default.Close, "移除", Modifier.size(20.dp), tint = dim) }
+                            val dir = when (c.type) {
+                                Candidate.Type.BUS -> if (c.lastStop.isNotEmpty()) "开往 ${c.lastStop} 方向" else ""
+                                Candidate.Type.METRO -> if (c.metroDir.isNotEmpty()) "往 ${c.metroDir}" else ""
+                                Candidate.Type.SHUTTLE ->
+                                    if (c.departures.isNotEmpty()) "发车 " + c.departures.sorted().joinToString(" ") { hhmm(it) }
+                                    else ""
+                            }
+                            if (dir.isNotEmpty()) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(dir, fontSize = 12.sp, color = dim)
+                            }
+                            if (c.type == Candidate.Type.METRO && (c.weekdayBands.isNotEmpty() || c.weekendBands.isNotEmpty())) {
+                                Spacer(Modifier.height(6.dp))
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    HeadwayTag("工作日", c.bandsFor(false), dark)
+                                    HeadwayTag("周末", c.bandsFor(true), dark)
+                                }
+                            }
                         }
                     }
                 }
@@ -431,7 +546,7 @@ private fun LegCard(
                 }
             }
             key(ride.minutes, stepperNonce) {
-                Stepper(if (isLast) "预计乘车时长（接近下车站时提醒）" else "本段预计乘车时长",
+                Stepper(if (isLast) "预计乘车时长" else "本段预计乘车时长",
                     ride.minutes, 1, 120) { v ->
                     if (ride.source == Learn.Ride.Source.LEARNED) pendingRide = v
                     else onChange(leg.copy(rideMin = v, rideMinManual = true))
@@ -449,6 +564,29 @@ private fun LegCard(
             Text(note, fontSize = 12.sp, lineHeight = 17.sp, color = noteColor)
     }
 }
+
+/** 11sp 细边框方式标签：地铁 / 公交 / 班车 */
+@Composable
+private fun ModeTag(text: String, dark: Boolean) {
+    val shape = RoundedCornerShape(6.dp)
+    Text(text, fontSize = 11.sp, color = Fuse.dim(dark),
+        modifier = Modifier.clip(shape).border(1.dp, Fuse.hairline(dark), shape).padding(horizontal = 6.dp, vertical = 1.dp))
+}
+
+/** 11sp 灰底间隔胶囊：「工作日 6–11 分钟」 */
+@Composable
+private fun HeadwayTag(day: String, bands: List<HeadwayBand>, dark: Boolean) {
+    if (bands.isEmpty()) return
+    val hws = bands.map { it.headwaySec }
+    val lo = hws.min(); val hi = hws.max()
+    val text = if (lo == hi) "$day ${hwText(lo)} 分钟" else "$day ${hwText(lo)}–${hwText(hi)} 分钟"
+    Text(text, fontSize = 11.sp, color = Fuse.dim(dark),
+        modifier = Modifier.clip(RoundedCornerShape(6.dp))
+            .background(Color.White.copy(alpha = if (dark) 0.08f else 0.05f))
+            .padding(horizontal = 7.dp, vertical = 3.dp))
+}
+
+private fun hwText(sec: Int) = "${((sec + 30) / 60).coerceAtLeast(1)}"
 
 /** 点已添加的公交/地铁弹出来改：地铁可改方向和逐段间隔（分 + 秒），两者都能改下车站 */
 @Composable

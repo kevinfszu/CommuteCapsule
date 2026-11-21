@@ -124,7 +124,7 @@ object Decision {
                     (if (b.second.stopsAway == 0) "已到站" else "还有 ${b.second.stopsAway} 站") +
                     if (tip.isNotEmpty()) " · $tip" else ""
                 tip.isNotEmpty() -> tip
-                else -> "暂无车辆信息"
+                else -> "暂无车辆信息 · 可在设置中检查数据源，或稍后重试"
             }
             val head = if (b != null && b.second.stopsAway >= 0) (if (b.second.stopsAway == 0) "已到站" else "${b.second.stopsAway}站") else "暂无车辆"
             return Advice(Mode.NO_BUS, b?.first ?: options.first(), b?.second, options.first().walkSec, 0, head, detail)
@@ -252,8 +252,13 @@ object Decision {
                 "${oo.candidate.stopName}（定位中）$nextText")
             oo.walkSec == 0 -> Advice(Mode.METRO, oo, catchable?.second, 0, 0, head ?: "进站",
                 "已到 ${oo.candidate.stopName}$nextText")
-            else -> Advice(Mode.METRO, oo, catchable?.second, oo.walkSec, 0, head ?: "前往地铁站",
-                "步行约 ${mins(oo.walkSec).coerceAtLeast(1)} 分钟到 ${oo.candidate.stopName}$nextText")
+            else -> {
+                val walk = mins(oo.walkSec).coerceAtLeast(1)
+                if (walk > 45) Advice(Mode.METRO, oo, catchable?.second, oo.walkSec, 0, "距离较远",
+                    "距离较远，请确认定位与行程方向$nextText")
+                else Advice(Mode.METRO, oo, catchable?.second, oo.walkSec, 0, head ?: "前往地铁站",
+                    "步行约 $walk 分钟到 ${oo.candidate.stopName}$nextText")
+            }
         }
     }
 

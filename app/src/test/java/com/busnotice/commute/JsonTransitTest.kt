@@ -83,6 +83,24 @@ class JsonTransitTest {
     }
 
     @Test
+    fun `line color accepts color or amap uicolor`() {
+        val doc = JsonTransit.parse(
+            """
+            { "lines": [
+              { "id": "c1", "name": "11号线", "subway": true, "uicolor": "F9BE58",
+                "stops": [{"name":"A","lat":23.0,"lng":113.0},{"name":"B","lat":23.01,"lng":113.0}] },
+              { "id": "c2", "name": "13号线", "subway": true, "color": "#818530",
+                "stops": [{"name":"A","lat":23.0,"lng":113.0},{"name":"B","lat":23.01,"lng":113.0}] }
+            ] }
+            """.trimIndent(),
+        )
+        assertEquals(listOf("F9BE58", "818530"), doc.lines.map { it.color })
+        assertEquals("F9BE58", JsonTransit.lineDetail(doc, "c1", "").colorHex)
+        val colors = JsonTransit.subwayDirs(doc, 23.0, 113.0, "A", "").associate { it.line to it.colorHex }
+        assertEquals(mapOf("11号线" to "F9BE58", "13号线" to "818530"), colors)
+    }
+
+    @Test
     fun `search finds line by short key`() {
         val doc = JsonTransit.parse(sample)
         val result = JsonTransit.search(doc, "13", "test")

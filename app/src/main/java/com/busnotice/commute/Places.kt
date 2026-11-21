@@ -226,6 +226,17 @@ object Places {
 
     fun bothConfirmed(ctx: Context) = Kind.values().all { confirmed(ctx, it) != null }
 
+    /** 这个坐标是否就是学到的「家 / 公司」（maxM 米内），命中返回标签名，否则 null */
+    @Synchronized
+    internal fun nearestLabel(ctx: Context, lat: Double, lng: Double, maxM: Double = 120.0): String? {
+        if (lat.isNaN() || lng.isNaN()) return null
+        val hit = Kind.values()
+            .mapNotNull { k -> confirmed(ctx, k)?.let { k to Geo.distanceM(lat, lng, it.first, it.second) } }
+            .filter { it.second <= maxM }
+            .minByOrNull { it.second } ?: return null
+        return if (hit.first == Kind.HOME) "家" else "公司"
+    }
+
     @Synchronized
     fun reset(ctx: Context) {
         cache = mutableListOf(); samplesCache = mutableListOf(); derivedCache = null; derivedBest = null

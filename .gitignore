@@ -6,3 +6,6 @@ local.properties
 /data/
 # 本地签名密钥备份（勿提交）
 .signing/
+# 本地构建缓存与本机数据备份（勿提交）
+.kotlin/
+.trae/backup/

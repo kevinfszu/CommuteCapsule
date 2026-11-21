@@ -14,6 +14,70 @@ object Learn {
     const val MIN_SAMPLES = 6
     private const val MIN_DAYS = 4
 
+    // ---------- 写入日志：一趟行程结束时把本次写入的样本条目存进行程记录，删除记录时可精确回滚 ----------
+    private const val JSEP = "\u001f"
+    private val journal = ArrayList<String>()
+
+    /** 行程开始：清空日志 */
+    fun beginJournal() = synchronized(journal) { journal.clear() }
+
+    /** 行程结束：取走本次写入的样本条目 */
+    fun endJournal(): List<String> = synchronized(journal) { journal.toList().also { journal.clear() } }
+
+    private fun journalNote(entry: String) {
+        synchronized(journal) { journal.add(entry) }
+    }
+
+    internal fun noteWalkJournal(tripId: String, kind: String, day: Long) =
+        journalNote("walk$JSEP$tripId$JSEP$kind$JSEP$day")
+
+    /**
+     * 删除一条行程记录时调用：把该次行程写入的样本原样撤掉。
+     * 只按日志定位，不回滚别的行程的样本；找不到对应样本时静默跳过。
+     */
+    fun rollback(ctx: Context, entries: List<String>) {
+        entries.forEach { raw ->
+            val p = raw.split(JSEP)
+            if (p.size < 3) return@forEach
+            when (p[0]) {
+                "node" -> dropToken(ctx, NODES, p[1], p[2], last = false)
+                "habit" -> dropToken(ctx, PREFS, p[1], p[2], last = false)
+                "ride" -> dropToken(ctx, RIDE, p[1], p[2], last = true)
+                "stop" -> dropToken(ctx, STOPS, p[1], p[2], last = true)
+                "bus" -> restoreFloat(ctx, BUS_SPEED, p[1], p[2], p.getOrNull(3))
+                "metro" -> restoreInt(ctx, METRO, p[1], p[2], p.getOrNull(3))
+                "walk" -> if (p.size >= 4) p[3].toLongOrNull()?.let { WalkLearn.dropSample(ctx, p[1], p[2], it) }
+            }
+        }
+    }
+
+    private fun dropToken(ctx: Context, prefsName: String, key: String, token: String, last: Boolean) {
+        val p = ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+        val list = (p.getString(key, "") ?: "").split(',').map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
+        val i = if (last) list.indexOfLast { it == token } else list.indexOfFirst { it == token }
+        if (i < 0) return
+        list.removeAt(i)
+        if (list.isEmpty()) p.edit().remove(key).apply()
+        else p.edit().putString(key, list.joinToString(",")).apply()
+    }
+
+    private fun restoreFloat(ctx: Context, prefsName: String, key: String, oldToken: String, newToken: String?) {
+        val old = oldToken.toFloatOrNull() ?: return
+        val p = ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+        // 之后又学过新样本时不动当前值，避免把更新的数据覆盖掉
+        val expected = newToken?.toFloatOrNull()
+        if (expected != null && kotlin.math.abs(p.getFloat(key, 0f) - expected) > 1e-3f) return
+        if (old <= 0f) p.edit().remove(key).apply() else p.edit().putFloat(key, old).apply()
+    }
+
+    private fun restoreInt(ctx: Context, prefsName: String, key: String, oldToken: String, newToken: String?) {
+        val old = oldToken.toIntOrNull() ?: return
+        val p = ctx.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
+        val expected = newToken?.toIntOrNull()
+        if (expected != null && p.getInt(key, 0) != expected) return
+        if (old == 0) p.edit().remove(key).apply() else p.edit().putInt(key, old).apply()
+    }
+
     // v3：每条是「哪天:几点上车」，一天只留一条；旧数据混了大量测试样本，整体作废
     private fun key(tripId: String) = "v3:$tripId"
 
@@ -32,9 +96,11 @@ object Learn {
         val day = t.toLocalDate().toEpochDay()
         val list = entries(ctx, tripId)
         if (list.any { it.day == day }) return
-        val out = (list + Entry(day, t.hour * 60 + t.minute)).takeLast(KEEP)
+        val minute = t.hour * 60 + t.minute
+        val out = (list + Entry(day, minute)).takeLast(KEEP)
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString(key(tripId), out.joinToString(",") { "${it.day}:${it.minute}" }).apply()
+        journalNote("habit$JSEP${key(tripId)}$JSEP$day:$minute")
     }
 
     /**
@@ -110,6 +176,7 @@ object Learn {
         val k = "$tripId#$legIdx"
         val list = (p.getString(k, "") ?: "").split(',').filter { it.isNotBlank() } + "$minutes"
         p.edit().putString(k, list.takeLast(10).joinToString(",")).apply()
+        journalNote("ride$JSEP$k$JSEP$minutes")
     }
 
     /** 攒够 3 次后用中位数，否则 null */
@@ -165,6 +232,7 @@ object Learn {
         val old = p.getFloat(k, 0f)
         val v = if (old <= 0f) mPerMin else old * 0.7 + mPerMin * 0.3
         p.edit().putFloat(k, v.toFloat()).apply()
+        journalNote("bus$JSEP$k$JSEP$old$JSEP$v")
     }
 
     // ---------- 地铁推算的偏差：每次在地铁段手动点「已上车」，对比推算班次修正 ----------
@@ -179,7 +247,9 @@ object Learn {
     fun recordMetro(ctx: Context, key: String, residualSec: Int) {
         val p = ctx.getSharedPreferences(METRO, Context.MODE_PRIVATE)
         val old = p.getInt(key, 0)
-        p.edit().putInt(key, (old * 0.7 + residualSec * 0.3).toInt()).apply()
+        val v = (old * 0.7 + residualSec * 0.3).toInt()
+        p.edit().putInt(key, v).apply()
+        journalNote("metro$JSEP$key$JSEP$old$JSEP$v")
     }
 
     fun resetMetro(ctx: Context, c: Candidate) {
@@ -220,6 +290,7 @@ object Learn {
         if (list.any { it.first == day }) return
         val out = (list + (day to sec)).takeLast(KEEP)
         p.edit().putString(nodeKey(metric, scope), out.joinToString(",") { "${it.first}:${it.second}" }).apply()
+        journalNote("node$JSEP${nodeKey(metric, scope)}$JSEP$day:$sec")
     }
 
     fun nodeSec(ctx: Context, metric: Metric, scope: String): Int? {
@@ -246,4 +317,140 @@ object Learn {
     /** T-1 提前量：按个人反应时长，夹在 60–240 秒；样本不足用 90 秒 */
     fun alertLeadMs(ctx: Context, tripId: String, legIdx: Int): Long =
         ((reactSec(ctx, tripId, legIdx) ?: 90).coerceIn(60, 240)) * 1000L
+
+    // ---------- 站间行车时长：按「线路 + 区间」学习（到站打卡积累） ----------
+    // 键：a|线路 → 每站秒数样本；p|线路|A|B → A→B 区间秒数样本（用站名，改名后大部分仍能对上）
+    private const val STOPS = "learn_stops_v1"
+    private const val STOP_AVG = "a|"
+    private const val STOP_PAIR = "p|"
+    private const val STOP_KEEP_AVG = 30
+    private const val STOP_KEEP_PAIR = 8
+
+    private fun stopSamples(p: android.content.SharedPreferences, k: String): List<Int> =
+        (p.getString(k, "") ?: "").split(',').mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }
+
+    private fun stopMedian(l: List<Int>): Int? = if (l.size < 2) null else l.sorted()[l.size / 2]
+
+    /**
+     * 一次乘车结束（下车 / 结束行程）时落库。marks 是撤销之后仍保留的打卡；
+     * atAlight 晚于最后一次打卡时，补上「最后一站 → 下车站」这一段。
+     */
+    fun recordStops(ctx: Context, lineKey: String, names: List<String>, boardedAt: Long, atAlight: Long, marks: List<StopMark>) {
+        if (lineKey.isEmpty() || names.size < 2 || boardedAt <= 0) return
+        val hops = names.size - 1
+        val list = marks.filter { it.idx in 0..hops && it.at > boardedAt }.sortedBy { it.idx }
+        if (list.isEmpty()) return
+        val full = if (atAlight > (list.lastOrNull()?.at ?: 0L)) list + StopMark(hops, atAlight) else list
+        val intervals = RideStops.intervals(boardedAt, full)
+        if (intervals.isEmpty()) return
+        // 一次乘车同一个键可能有多条样本，先聚合再写，避免边写边读拿不到本次前一条
+        val pairs = HashMap<String, MutableList<Int>>()
+        val avgs = mutableListOf<Int>()
+        for (iv in intervals) {
+            if (iv.span == 1) {
+                val from = names.getOrNull(iv.fromIdx) ?: continue
+                val to = names.getOrNull(iv.toIdx) ?: continue
+                pairs.getOrPut("$from|$to") { mutableListOf() }.add(iv.sec)
+            } else {
+                avgs.add(iv.sec)   // 跨站只能给出平均每站，没法定到某个区间
+            }
+        }
+        val p = ctx.getSharedPreferences(STOPS, Context.MODE_PRIVATE)
+        val edit = p.edit()
+        pairs.forEach { (pair, secs) ->
+            val k = "$STOP_PAIR$lineKey|$pair"
+            edit.putString(k, (stopSamples(p, k) + secs).takeLast(STOP_KEEP_PAIR).joinToString(","))
+            secs.forEach { journalNote("stop$JSEP$k$JSEP$it") }
+        }
+        if (avgs.isNotEmpty()) {
+            val k = "$STOP_AVG$lineKey"
+            edit.putString(k, (stopSamples(p, k) + avgs).takeLast(STOP_KEEP_AVG).joinToString(","))
+            avgs.forEach { journalNote("stop$JSEP$k$JSEP$it") }
+        }
+        edit.apply()
+    }
+
+    /** 这条线（含方向/终点站）学到的每站秒数；至少 2 个样本 */
+    fun stopPerHopSec(ctx: Context, lineKey: String): Int? {
+        if (lineKey.isEmpty()) return null
+        return stopMedian(stopSamples(ctx.getSharedPreferences(STOPS, Context.MODE_PRIVATE), "$STOP_AVG$lineKey"))
+    }
+
+    fun stopPairSec(ctx: Context, lineKey: String, from: String, to: String): Int? {
+        if (lineKey.isEmpty() || from.isEmpty() || to.isEmpty()) return null
+        return stopMedian(stopSamples(ctx.getSharedPreferences(STOPS, Context.MODE_PRIVATE), "$STOP_PAIR$lineKey|$from|$to"))
+    }
+
+    /** 这条线的全部区间样本：进站/恢复时加载一次，避免逐站读 prefs；键 "from|to" → 中位数 */
+    fun stopPairTable(ctx: Context, lineKey: String): Map<String, Int> {
+        if (lineKey.isEmpty()) return emptyMap()
+        val pre = "$STOP_PAIR$lineKey|"
+        val p = ctx.getSharedPreferences(STOPS, Context.MODE_PRIVATE)
+        return p.all.keys.filter { it.startsWith(pre) }.mapNotNull { k ->
+            val v = stopMedian(stopSamples(p, k)) ?: return@mapNotNull null
+            k.removePrefix(pre) to v
+        }.toMap()
+    }
+
+    // ---------- 只读报表：给「算法学习」页面展示用，不参与预测，也不写任何数据 ----------
+    data class Stat(val values: List<Int>, val need: Int) {
+        val median: Int? get() = if (values.size >= need) values.sorted()[values.size / 2] else null
+    }
+
+    data class HabitStat(val days: Int, val typical: Int?, val needDays: Int)
+    data class StopLineStat(val lineKey: String, val perHop: Stat, val pairs: List<Pair<String, Stat>>)
+    data class MetroStat(val stop: String, val line: String, val dir: String, val peak: Boolean, val sec: Int)
+
+    fun habitStat(ctx: Context, tripId: String, dow: Int): HabitStat {
+        val all = entries(ctx, tripId)
+        val day = all.filter { java.time.LocalDate.ofEpochDay(it.day).dayOfWeek.value == dow }
+        return HabitStat(all.size, typicalBoard(ctx, tripId, dow), if (day.size >= 3) 3 else 5)
+    }
+
+    fun rideStat(ctx: Context, tripId: String, legIdx: Int): Stat {
+        val values = (ctx.getSharedPreferences(RIDE, Context.MODE_PRIVATE).getString("$tripId#$legIdx", "") ?: "")
+            .split(',').mapNotNull { it.trim().toIntOrNull() }
+        return Stat(values, 3)
+    }
+
+    fun nodeStat(ctx: Context, m: Metric, scope: String): Stat =
+        Stat(nodeEntries(ctx, m, scope).map { it.second }.filter { it in m.range }, m.minSamples)
+
+    /** 站间样本按线路汇总；lineKey 自身含一个「|」，区间键从右往左拆 */
+    fun stopStats(ctx: Context): List<StopLineStat> {
+        val p = ctx.getSharedPreferences(STOPS, Context.MODE_PRIVATE)
+        val avgs = LinkedHashMap<String, MutableList<Int>>()
+        val pairs = LinkedHashMap<String, MutableMap<String, MutableList<Int>>>()
+        p.all.keys.forEach { k ->
+            if (k.startsWith(STOP_AVG)) {
+                avgs.getOrPut(k.removePrefix(STOP_AVG)) { mutableListOf() }.addAll(stopSamples(p, k))
+            } else if (k.startsWith(STOP_PAIR)) {
+                val rest = k.removePrefix(STOP_PAIR)
+                val to = rest.substringAfterLast('|', "")
+                val before = rest.substringBeforeLast('|', "")
+                val from = before.substringAfterLast('|', "")
+                val line = before.substringBeforeLast('|', "")
+                if (line.isEmpty() || from.isEmpty() || to.isEmpty()) return@forEach
+                pairs.getOrPut(line) { LinkedHashMap() }
+                    .getOrPut("$from → $to") { mutableListOf() }
+                    .addAll(stopSamples(p, k))
+            }
+        }
+        return (avgs.keys + pairs.keys).distinct().sorted().map { line ->
+            StopLineStat(
+                lineKey = line,
+                perHop = Stat(avgs[line].orEmpty(), 2),
+                pairs = pairs[line].orEmpty().map { (k, v) -> k to Stat(v, 2) },
+            )
+        }
+    }
+
+    /** 地铁班次偏差：键为「站名|线路|方向|p/o」，0 也保留（表示已学但没有偏差） */
+    fun metroStats(ctx: Context): List<MetroStat> =
+        ctx.getSharedPreferences(METRO, Context.MODE_PRIVATE).all.mapNotNull { (k, v) ->
+            val sec = (v as? Int) ?: return@mapNotNull null
+            val parts = k.split('|')
+            if (parts.size < 4) return@mapNotNull null
+            MetroStat(parts[0], parts[1], parts[2], parts[3] == "p", sec)
+        }.sortedWith(compareBy({ it.stop }, { it.line }, { it.dir }, { it.peak }))
 }

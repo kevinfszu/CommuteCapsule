@@ -202,31 +202,117 @@ object NodeLog {
     private fun ride(a: Anchors, leg: Int): Int =
         a.rideSec.getOrNull(leg)?.coerceIn(0, 3 * 3600) ?: 0
 
-    // ---------- 最近一趟（补录用，保留 7 天） ----------
+    // ---------- 行程记录（最多 30 条，保留 30 天；删除时可回滚该次学习样本） ----------
 
-    fun saveLastRun(ctx: Context, trip: Trip, nodes: List<Stamp>, at: Long = System.currentTimeMillis()) {
-        val o = JSONObject()
-            .put("saved", at)
-            .put("trip", trip.toJson())
-            .put("nodes", encode(nodes))
-        prefs(ctx).edit().putString(LAST, o.toString()).apply()
+    private const val HISTORY = "history"
+    private const val MAX_RECORDS = 30
+    private const val HISTORY_KEEP_MS = 30L * 24 * 3600_000L
+
+    /** 一趟已结束的行程记录：节点时间轴 + 本次写入的学习样本日志 */
+    data class RunRecord(
+        val id: String,
+        val savedAt: Long,
+        val trip: Trip,
+        val nodes: List<Stamp>,
+        val aborted: Boolean = false,
+        val test: Boolean = false,
+        val marks: List<StopMark> = emptyList(),
+        val learned: List<String> = emptyList(),
+    ) {
+        fun toJson(): JSONObject = JSONObject()
+            .put("id", id).put("saved", savedAt)
+            .put("trip", trip.toJson()).put("nodes", NodeLog.encode(nodes))
+            .put("aborted", aborted).put("test", test)
+            .put("marks", marks.joinToString(",") { "${it.idx}:${it.at}" })
+            .put("learned", JSONArray().apply { learned.forEach { put(it) } })
+
+        companion object {
+            fun fromJson(o: JSONObject): RunRecord = RunRecord(
+                id = o.optString("id").ifEmpty { "legacy" },
+                savedAt = o.optLong("saved"),
+                trip = Trip.fromJson(o.getJSONObject("trip")),
+                nodes = NodeLog.decode(o.optString("nodes")),
+                aborted = o.optBoolean("aborted"),
+                test = o.optBoolean("test"),
+                marks = o.optString("marks").split(',').mapNotNull { e ->
+                    val kv = e.split(':')
+                    if (kv.size != 2) return@mapNotNull null
+                    val idx = kv[0].toIntOrNull() ?: return@mapNotNull null
+                    val at = kv[1].toLongOrNull() ?: return@mapNotNull null
+                    StopMark(idx, at)
+                },
+                learned = o.optJSONArray("learned")?.let { a ->
+                    (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotEmpty) }
+                } ?: emptyList(),
+            )
+        }
+    }
+
+    fun saveLastRun(
+        ctx: Context, trip: Trip, nodes: List<Stamp>, at: Long = System.currentTimeMillis(),
+        aborted: Boolean = false, test: Boolean = false,
+        marks: List<StopMark> = emptyList(), learned: List<String> = emptyList(),
+    ) {
+        val rec = RunRecord(java.util.UUID.randomUUID().toString(), at, trip, nodes, aborted, test, marks, learned)
+        writeHistory(ctx, (records(ctx, at) + rec).take(MAX_RECORDS))
+    }
+
+    /** 全部行程记录，新的在前（旧版本只存了一条 LAST，首次读取时迁移过来） */
+    fun records(ctx: Context, now: Long = System.currentTimeMillis()): List<RunRecord> {
+        val p = prefs(ctx)
+        val raw = p.getString(HISTORY, null)
+        if (raw == null) {
+            val legacy = p.getString(LAST, null) ?: return emptyList()
+            val o = runCatching { JSONObject(legacy) }.getOrNull() ?: return emptyList()
+            if (now - o.optLong("saved") > HISTORY_KEEP_MS) return emptyList()
+            val trip = runCatching { Trip.fromJson(o.getJSONObject("trip")) }.getOrNull() ?: return emptyList()
+            return listOf(RunRecord("legacy", o.optLong("saved"), trip, decode(o.optString("nodes"))))
+        }
+        val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
+        return (0 until arr.length()).mapNotNull { i ->
+            runCatching { RunRecord.fromJson(arr.getJSONObject(i)) }.getOrNull()
+        }.filter { now - it.savedAt <= HISTORY_KEEP_MS }
+    }
+
+    fun record(ctx: Context, id: String): RunRecord? = records(ctx).firstOrNull { it.id == id }
+
+    /** 删除一条记录：该次行程写入的学习样本一并回滚 */
+    fun deleteRecord(ctx: Context, id: String): Boolean {
+        val all = records(ctx).toMutableList()
+        val i = all.indexOfFirst { it.id == id }
+        if (i < 0) return false
+        val rec = all.removeAt(i)
+        if (rec.learned.isNotEmpty()) runCatching { Learn.rollback(ctx, rec.learned) }
+        writeHistory(ctx, all)
+        return true
     }
 
     fun lastRun(ctx: Context, now: Long = System.currentTimeMillis()): Pair<Trip, List<Stamp>>? {
-        val raw = prefs(ctx).getString(LAST, null) ?: return null
-        return runCatching {
-            val o = JSONObject(raw)
-            if (now - o.optLong("saved") > LAST_KEEP_MS) return null
-            val trip = Trip.fromJson(o.getJSONObject("trip"))
-            trip to decode(o.optString("nodes"))
-        }.getOrNull()
+        val r = records(ctx, now).firstOrNull() ?: return null
+        if (now - r.savedAt > LAST_KEEP_MS) return null
+        return r.trip to r.nodes
     }
 
     fun updateLast(ctx: Context, nodes: List<Stamp>) {
-        val raw = prefs(ctx).getString(LAST, null) ?: return
-        val o = runCatching { JSONObject(raw) }.getOrNull() ?: return
-        o.put("nodes", encode(nodes))
-        prefs(ctx).edit().putString(LAST, o.toString()).apply()
+        val p = prefs(ctx)
+        if (p.getString(HISTORY, null) == null) {
+            // 旧版本只有一条 LAST：继续原地更新
+            val raw = p.getString(LAST, null) ?: return
+            val o = runCatching { JSONObject(raw) }.getOrNull() ?: return
+            o.put("nodes", encode(nodes))
+            p.edit().putString(LAST, o.toString()).apply()
+            return
+        }
+        val all = records(ctx).toMutableList()
+        if (all.isEmpty()) return
+        all[0] = all[0].copy(nodes = nodes)
+        writeHistory(ctx, all)
+    }
+
+    private fun writeHistory(ctx: Context, list: List<RunRecord>) {
+        val arr = JSONArray()
+        list.forEach { arr.put(it.toJson()) }
+        prefs(ctx).edit().putString(HISTORY, arr.toString()).apply()
     }
 
     fun clearActive(ctx: Context) {

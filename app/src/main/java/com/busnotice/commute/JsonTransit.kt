@@ -30,6 +30,7 @@ object JsonTransit {
         val stops: List<Stop>,
         val weekdayBands: List<HeadwayBand> = emptyList(),
         val weekendBands: List<HeadwayBand> = emptyList(),
+        val color: String = "",   // 6 位十六进制，来自 color 或高德原始字段 uicolor
     )
 
     data class Meta(val source: String, val updated: String, val note: String)
@@ -118,6 +119,7 @@ object JsonTransit {
                 stops = stops,
                 weekdayBands = weekdayBands,
                 weekendBands = weekendBands,
+                color = parseColor(o),
             )
         }
 
@@ -185,6 +187,7 @@ object JsonTransit {
             },
             reverseLineId = line.reverseId,
             hopSec = line.hopSec,
+            colorHex = line.color,
         )
     }
 
@@ -240,6 +243,7 @@ object JsonTransit {
                 order = index + 1,
                 weekdayBands = line.weekdayBands,
                 weekendBands = line.weekendBands,
+                colorHex = line.color,
             )
         }.distinctBy { it.line to it.dest }
     }
@@ -364,6 +368,13 @@ object JsonTransit {
     }
 
     private fun norm(s: String) = s.replace("地铁", "").replace(" ", "").trim()
+
+    /** 线路色：优先 color，其次高德原始字段 uicolor；非 6 位十六进制视为没有 */
+    private fun parseColor(o: JSONObject): String {
+        val raw = o.optString("color", "").ifBlank { o.optString("uicolor", "") }
+        val hex = raw.trim().removePrefix("#").removePrefix("0x").removePrefix("0X")
+        return if (hex.length == 6 && hex.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) hex.uppercase() else ""
+    }
 
     /** service.weekday / service.weekend 的 band 数组，最多 8 段；非法段跳过 */
     private fun parseService(o: JSONObject?): Pair<List<HeadwayBand>, List<HeadwayBand>> {

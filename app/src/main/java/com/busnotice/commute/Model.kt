@@ -35,6 +35,8 @@ data class Candidate(
     // 地铁：工作日 / 周末分时段发车间隔；周末为空 = 复制工作日
     val weekdayBands: List<HeadwayBand> = emptyList(),
     val weekendBands: List<HeadwayBand> = emptyList(),
+    // 数据源自带的线路色（6 位十六进制，如高德 uicolor）；空 = 界面按线路名取色
+    val colorHex: String = "",
 ) {
     enum class Type { BUS, SHUTTLE, METRO }
 
@@ -103,6 +105,7 @@ data class Candidate(
         .put("alightName", alightName).put("departures", JSONArray(departures)).put("headwayMin", headwayMin)
         .put("offPeakHeadwayMin", offPeakHeadwayMin).put("metroDir", metroDir)
         .put("weekdayBands", bandsText(weekdayBands)).put("weekendBands", bandsText(weekendBands))
+        .put("colorHex", colorHex)
         .apply { if (!alightLat.isNaN() && !alightLng.isNaN()) put("alightLat", alightLat).put("alightLng", alightLng) }
 
     companion object {
@@ -133,6 +136,7 @@ data class Candidate(
                 alightLat = o.optDouble("alightLat"), alightLng = o.optDouble("alightLng"),
                 weekdayBands = parseBands(o.optString("weekdayBands")),
                 weekendBands = parseBands(o.optString("weekendBands")),
+                colorHex = o.optString("colorHex", ""),
             )
         }
 
@@ -200,6 +204,8 @@ data class Trip(
     val leaveLat: Double = Double.NaN,
     val leaveLng: Double = Double.NaN,
     val leaveRadiusM: Int = 0,
+    // 出发地名称：优先「家 / 公司」，其次反查到的地址；仅用于展示
+    val leaveName: String = "",
     // 没人工打卡时的预估：地铁上车 = 进站 + n 秒；终点下车 = 出站 - n 秒
     val boardEstimateSec: Int = 180,
     val alightEstimateSec: Int = 120,
@@ -232,7 +238,7 @@ data class Trip(
         .put("dayMask", dayMask).put("chinaWorkday", chinaWorkday)
         .put("startMinute", startMinute).put("endMinute", endMinute)
         .put("warmupMin", warmupMin).put("enabled", enabled)
-        .put("leaveRadiusM", leaveRadiusM)
+        .put("leaveRadiusM", leaveRadiusM).put("leaveName", leaveName)
         .put("boardEstimateSec", boardEstimateSec).put("alightEstimateSec", alightEstimateSec)
         .apply { if (!leaveLat.isNaN() && !leaveLng.isNaN()) put("leaveLat", leaveLat).put("leaveLng", leaveLng) }
 
@@ -247,7 +253,7 @@ data class Trip(
                 startMinute = o.optInt("startMinute", 480), endMinute = o.optInt("endMinute", 510),
                 warmupMin = o.optInt("warmupMin", 10), enabled = o.optBoolean("enabled", true),
                 leaveLat = o.optDouble("leaveLat"), leaveLng = o.optDouble("leaveLng"),
-                leaveRadiusM = o.optInt("leaveRadiusM", 0),
+                leaveRadiusM = o.optInt("leaveRadiusM", 0), leaveName = o.optString("leaveName", ""),
                 boardEstimateSec = o.optInt("boardEstimateSec", 180).coerceIn(0, 1800),
                 alightEstimateSec = o.optInt("alightEstimateSec", 120).coerceIn(0, 1800),
             )

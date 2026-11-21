@@ -4,14 +4,20 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import com.busnotice.commute.Candidate
 import com.busnotice.commute.Leg
 import com.busnotice.commute.Trip
+import kotlinx.coroutines.launch
 
 sealed interface Screen {
     data object Home : Screen
+    data object Settings : Screen
+    data object Records : Screen
+    data object Learn : Screen
     data object Edit : Screen
     data class PickBus(val legIndex: Int) : Screen
     data class PickMetro(val legIndex: Int) : Screen
@@ -21,7 +27,10 @@ sealed interface Screen {
 @Composable
 fun App(resumeTick: Int) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
-    var draft by remember { mutableStateOf(Trip()) }
+    var draft by remember { mutableStateOf(Trip(chinaWorkday = true)) }
+    var dirty by remember { mutableStateOf(false) }
+    val editState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     fun addCandidate(legIndex: Int, c: Candidate, replaceAt: Int = -1, rideMin: Int = 0) {
         val legs = draft.legs.toMutableList()
@@ -35,24 +44,37 @@ fun App(resumeTick: Int) {
             rideMinManual = if (rideMin > 0) true else leg.rideMinManual,
         )
         draft = draft.copy(legs = legs)
+        dirty = true
         screen = Screen.Edit
     }
 
-    BackHandler(enabled = screen != Screen.Home) {
-        screen = if (screen == Screen.Edit) Screen.Home else Screen.Edit
-    }
+    BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
 
     when (val s = screen) {
         Screen.Home -> HomeScreen(
             resumeTick = resumeTick,
-            onNew = { draft = Trip(legs = listOf(Leg(emptyList()))); screen = Screen.Edit },
-            onEdit = { draft = it; screen = Screen.Edit },
+            onNew = {
+                draft = Trip(chinaWorkday = true, legs = listOf(Leg(emptyList()))); dirty = false
+                scope.launch { editState.scrollToItem(0) }
+                screen = Screen.Edit
+            },
+            onEdit = { draft = it; dirty = false; screen = Screen.Edit },
+            onOpenSettings = { screen = Screen.Settings },
         )
+        Screen.Settings -> SettingsScreen(
+            onBack = { screen = Screen.Home },
+            onOpenRecords = { screen = Screen.Records },
+            onOpenLearn = { screen = Screen.Learn },
+        )
+        Screen.Records -> RecordsScreen(onBack = { screen = Screen.Settings })
+        Screen.Learn -> LearnScreen(onBack = { screen = Screen.Settings })
         Screen.Edit -> TripEditor(
             trip = draft,
-            onChange = { draft = it },
-            onBack = { screen = Screen.Home },
-            onSaved = { screen = Screen.Home },
+            dirty = dirty,
+            state = editState,
+            onChange = { draft = it; dirty = true },
+            onBack = { dirty = false; screen = Screen.Home },
+            onSaved = { dirty = false; screen = Screen.Home },
             onAddBus = { screen = Screen.PickBus(it) },
             onAddMetro = { screen = Screen.PickMetro(it) },
             onEditShuttle = { leg, idx -> screen = Screen.EditShuttle(leg, idx) },

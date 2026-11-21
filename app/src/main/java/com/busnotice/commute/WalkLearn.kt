@@ -98,6 +98,16 @@ object WalkLearn {
         if (list.any { it.day == s.day }) return
         val arr = JSONArray(); (list + s).takeLast(KEEP).forEach { arr.put(it.toJson()) }
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(key(tripId, s.kind), arr.toString()).apply()
+        Learn.noteWalkJournal(tripId, s.kind, s.day)
+    }
+
+    /** 删除某趟某天的步行样本（删除行程记录时回滚用） */
+    fun dropSample(ctx: Context, tripId: String, kind: String, day: Long) {
+        val list = samples(ctx, tripId, kind)
+        val next = list.filter { it.day != day }
+        if (next.size == list.size) return
+        val arr = JSONArray(); next.forEach { arr.put(it.toJson()) }
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(key(tripId, kind), arr.toString()).apply()
     }
 
     /** 学到的步速（所有行程、所有步行段合起来，至少 3 次）；不够返回 null。这版还没有地方用它 */

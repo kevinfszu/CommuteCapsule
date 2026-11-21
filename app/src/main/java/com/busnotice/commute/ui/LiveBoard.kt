@@ -21,13 +21,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,7 +48,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -56,6 +66,7 @@ import androidx.compose.ui.unit.sp
 import com.busnotice.commute.Candidate
 import com.busnotice.commute.CommuteService
 import com.busnotice.commute.LiveSnapshot
+import com.busnotice.commute.Transit
 import com.busnotice.commute.NodeLog
 import com.busnotice.commute.Trip
 
@@ -65,11 +76,59 @@ fun shortLine(name: String): String {
     return m?.groupValues?.get(2) ?: name.trim().removeSuffix("路")
 }
 
-fun lineColor(c: Candidate?, fallbackName: String = ""): Color = when {
-    c == null -> if (Candidate.looksLikeMetro(fallbackName)) Fuse.MetroRed else Fuse.BusGreen
-    c.type == Candidate.Type.METRO -> Fuse.MetroRed
-    c.type == Candidate.Type.SHUTTLE -> Fuse.Shuttle
-    else -> Fuse.BusGreen
+/** 打卡时刻 →「08:12」 */
+private fun clockOf(at: Long): String =
+    java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault())
+        .toLocalTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm"))
+
+/** 公交线路牌的一组稳定配色：按线路名散列，让并排的 11 路 / 13 路一眼可分 */
+private val BusPalette = listOf(
+    Fuse.BusGreen,          // 绿
+    Color(0xFF2F6FE4),      // 蓝
+    Color(0xFF8A4FD1),      // 紫
+    Color(0xFFB8631F),      // 棕橙
+    Color(0xFF0E8A9C),      // 青
+    Color(0xFFC2185B),      // 玫红
+)
+
+/** 地铁按线路号取色（与上海地铁官方线色一致），并排两条线不再同色 */
+private val MetroPalette = listOf(
+    Color(0xFFE4002B), Color(0xFF97D700), Color(0xFFFFD100), Color(0xFF5F259F),
+    Color(0xFF63298F), Color(0xFFD9027D), Color(0xFFF57F29), Color(0xFF009EDB),
+    Color(0xFF71C5E8), Color(0xFFA192B2), Color(0xFF76232F), Color(0xFF007B5F),
+    Color(0xFFE999C0), Color(0xFF827A04), Color(0xFFB5A26D), Color(0xFF98D5DB),
+    Color(0xFFBC796F), Color(0xFFD6A461),
+)
+
+private fun lineNo(name: String): Int? =
+    Regex("(\\d+)").find(name)?.groupValues?.get(1)?.toIntOrNull()
+
+/** 6 位十六进制线路色（高德 uicolor 或 JSON 的 color 字段），非法返回 null */
+private fun hexColor(raw: String): Color? {
+    val h = raw.trim().removePrefix("#")
+    if (h.length != 6) return null
+    val v = h.toLongOrNull(16) ?: return null
+    return Color(0xFF000000L or v)
+}
+
+fun lineColor(c: Candidate?, fallbackName: String = ""): Color {
+    c?.let { hexColor(it.colorHex)?.let { col -> return col } }
+    val name = (c?.name.orEmpty()).ifEmpty { c?.label().orEmpty() }.ifEmpty { fallbackName }
+    // 旧行程没存颜色时按名字从数据源补查（高德 uicolor），查不到再退回本地调色板
+    if (c?.type != Candidate.Type.SHUTTLE) hexColor(Transit.colorOf(name))?.let { return it }
+    return when {
+        c == null || c.type == Candidate.Type.BUS -> {
+            val n = lineNo(name)
+            if (Candidate.looksLikeMetro(name) && n != null) MetroPalette[(n - 1).coerceIn(0, MetroPalette.lastIndex)]
+            else if (Candidate.looksLikeMetro(name)) Fuse.MetroRed
+            else BusPalette[Math.floorMod(name.hashCode(), BusPalette.size)]
+        }
+        c.type == Candidate.Type.METRO -> {
+            val n = lineNo(c.name.ifEmpty { c.label() })
+            if (n != null) MetroPalette[(n - 1).coerceIn(0, MetroPalette.lastIndex)] else Fuse.MetroRed
+        }
+        else -> Fuse.Shuttle
+    }
 }
 
 /** 彩色圆角线路牌 */
@@ -80,7 +139,8 @@ fun LineBadge(text: String, color: Color, modifier: Modifier = Modifier) {
             .padding(horizontal = 8.dp, vertical = 2.dp).widthIn(min = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(text, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1,
+        Text(text, color = if (color.luminance() > 0.4f) Color(0xFF1B1B1F) else Color.White,
+            fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 96.dp))
     }
 }
@@ -96,8 +156,13 @@ private fun parseBig(headline: String): BigNum? {
 private val Tnum = TextStyle(fontFeatureSettings = "tnum")
 
 @Composable
-fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
+fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Unit)? = null) {
     val ctx = LocalContext.current
+    var confirmEnd by remember { mutableStateOf(false) }
+    // 到站打卡：可打卡站点与已打卡记录由服务发布，不依赖 LiveSnapshot 的刷新频率
+    val stopNames by CommuteService.stopChoices.collectAsState()
+    val stopMarks by CommuteService.stopMarksUi.collectAsState()
+    var pickStop by remember { mutableStateOf(false) }
     val leg = trip?.legs?.getOrNull(s.legIndex)
     val cands = leg?.candidates.orEmpty()
     val shown = cands.filter { s.legTitle.contains(it.label()) }.take(3).ifEmpty { cands.take(1) }
@@ -105,7 +170,11 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
     // 本段下车站：填了就用，换乘段没填时用下一段上车站
     val alightName = leg?.candidates?.firstOrNull { it.alightName.isNotEmpty() }?.alightName
         ?: trip?.legs?.getOrNull(s.legIndex + 1)?.candidates?.firstOrNull()?.stopName
+    val demo = s.tripId == com.busnotice.commute.DemoPlayer.TRIP_ID
+    val demoWalk = demo && (s.headline.startsWith("步行") || s.headline == "已到达")
     val headText = when {
+        demoWalk && s.headline == "已到达" -> "广州国际金融城"
+        demoWalk -> "科韵路"
         s.riding && !alightName.isNullOrEmpty() -> "至 $alightName"
         !main?.stopName.isNullOrEmpty() -> main!!.stopName
         else -> s.legTitle
@@ -114,10 +183,13 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
     Column(Modifier.fillMaxWidth().board(dark).padding(18.dp)) {
         // 顶部：线路牌 + 方向 | 行程名 + 分段条
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (shown.isEmpty()) LineBadge(shortLine(s.legTitle), lineColor(null, s.legTitle))
-            shown.forEachIndexed { i, c ->
-                if (i > 0) Spacer(Modifier.width(4.dp))
-                LineBadge(shortLine(c.name.ifEmpty { c.label() }), lineColor(c))
+            if (demoWalk) LineBadge(if (s.headline == "已到达") "到达" else "步行", if (s.headline == "已到达") Fuse.BusGreen else Fuse.Yellow)
+            else if (shown.isEmpty()) LineBadge(shortLine(s.legTitle), lineColor(null, s.legTitle))
+            if (!demoWalk) {
+                shown.forEachIndexed { i, c ->
+                    if (i > 0) Spacer(Modifier.width(4.dp))
+                    LineBadge(shortLine(c.name.ifEmpty { c.label() }), lineColor(c))
+                }
             }
             Spacer(Modifier.width(8.dp))
             Text(headText, color = Color.White.copy(alpha = 0.65f), fontSize = 13.sp, maxLines = 1,
@@ -149,14 +221,23 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
             val big = parseBig(h)
             val glow = Shadow(Fuse.Yellow.copy(alpha = 0.45f), Offset.Zero, 24f)
             if (big != null) {
-                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(top = 10.dp)) {
-                    if (big.prefix.isNotEmpty()) {
-                        Text(big.prefix, color = Color.White, fontSize = 20.sp, modifier = Modifier.padding(bottom = 10.dp, end = 4.dp))
+                val caption = when {
+                    s.riding -> "乘车中"
+                    s.detail.startsWith("步行") -> "步行到站"
+                    else -> "候车"
+                }
+                Column {
+                    Text(caption, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 10.dp))
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        if (big.prefix.isNotEmpty()) {
+                            Text(big.prefix, color = Color.White, fontSize = 20.sp, modifier = Modifier.padding(bottom = 10.dp, end = 4.dp))
+                        }
+                        Text(big.num, color = Fuse.Yellow, fontSize = 80.sp, fontWeight = FontWeight.Bold,
+                            style = Tnum.copy(shadow = glow, lineHeight = 80.sp))
+                        Text(big.unit, color = Color.White, fontSize = 20.sp, maxLines = 1,
+                            modifier = Modifier.padding(start = 6.dp, bottom = 10.dp))
                     }
-                    Text(big.num, color = Fuse.Yellow, fontSize = 80.sp, fontWeight = FontWeight.Bold,
-                        style = Tnum.copy(shadow = glow, lineHeight = 80.sp))
-                    Text(big.unit, color = Color.White, fontSize = 20.sp, maxLines = 1,
-                        modifier = Modifier.padding(start = 6.dp, bottom = 10.dp))
                 }
             } else {
                 Text(h, color = Fuse.Yellow, fontSize = 44.sp, fontWeight = FontWeight.Bold,
@@ -206,20 +287,119 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean) {
             }
         }
 
-        Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!demo) Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val undoAt by CommuteService.undoUntil.collectAsState()
             val canUndo = undoAt > System.currentTimeMillis()
-            if (canUndo) {
+            when {
                 // 刚手点过「已上车」：2 分钟内这个按钮是撤销，防误点、防连点跳两段
-                Pill("撤销上车", Color.White.copy(alpha = 0.12f), Fuse.Yellow, Fuse.Yellow.copy(alpha = 0.5f), Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
-            } else if (!s.riding) {
-                Pill("确认上车", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
-            }
-            Pill("结束行程", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) {
-                if (s.tripId == com.busnotice.commute.DemoPlayer.TRIP_ID) com.busnotice.commute.DemoPlayer.stop(ctx)
-                else CommuteService.stop(ctx)
+                canUndo -> Pill("撤销上车", Color.White.copy(alpha = 0.12f), Fuse.Yellow, Fuse.Yellow.copy(alpha = 0.5f), Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
+                !s.riding -> Pill("确认上车", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
+                stopNames.size > 1 -> Pill("到站打卡", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) { pickStop = true }
             }
         }
+        // 已打卡摘要：左侧点开选站弹窗，右侧「撤销」直接撤掉最近一次
+        if (s.riding && stopMarks.isNotEmpty()) {
+            val last = stopMarks.last()
+            val lastLabel = stopNames.getOrNull(last.idx)
+            Row(
+                Modifier.padding(top = 6.dp).fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "已打卡 ${stopMarks.size} 站" + if (lastLabel != null) " · 最近 $lastLabel ${clockOf(last.at)}" else "",
+                    color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp))
+                        .clickable { pickStop = true }.padding(vertical = 6.dp),
+                )
+                Text(
+                    "撤销", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                        .clickable { CommuteService.instance?.undoLastStopMark() }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+        Box(
+            Modifier.padding(top = 4.dp).fillMaxWidth().height(44.dp).clip(CircleShape)
+                .clickable {
+                    if (s.tripId == com.busnotice.commute.DemoPlayer.TRIP_ID) com.busnotice.commute.DemoPlayer.stop(ctx)
+                    else if (trip != null) confirmEnd = true
+                    else CommuteService.stop(ctx)
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("结束行程", color = Color.White.copy(alpha = 0.5f), fontSize = 13.sp)
+        }
+    }
+
+    if (confirmEnd) {
+        AlertDialog(
+            onDismissRequest = { confirmEnd = false },
+            shape = DialogShape, containerColor = Fuse.surface(dark),
+            title = { Text("结束本次行程？") },
+            text = { Text("结束后本次不再提醒，可在最近行程中补录节点。") },
+            confirmButton = {
+                DialogButton("结束行程", danger = true, onClick = {
+                    confirmEnd = false
+                    CommuteService.stop(ctx)
+                    onStopped?.invoke()
+                })
+            },
+            dismissButton = { DialogButton("取消", onClick = { confirmEnd = false }) },
+        )
+    }
+
+    // 到站打卡：以推算的当前站为中心，前后各列 5 站（不含上车站与下车站）
+    if (pickStop && stopNames.size > 1) {
+        val here = (s.stopsPassed ?: 0).coerceIn(0, stopNames.size - 1)
+        val from = (here - 5).coerceAtLeast(1)
+        val to = (here + 5).coerceAtMost(stopNames.size - 1)
+        AlertDialog(
+            onDismissRequest = { pickStop = false },
+            shape = DialogShape, containerColor = Fuse.surface(dark),
+            title = { Text("现在到哪一站？", color = Fuse.ink(dark)) },
+            text = {
+                Column {
+                    Text("记录当前时刻，用来校正后面的到站时间", color = Fuse.dim(dark), fontSize = 13.sp)
+                    LazyColumn(Modifier.padding(top = 8.dp).heightIn(max = 380.dp)) {
+                        items((from..to).toList(), key = { it }) { i ->
+                            val m = stopMarks.firstOrNull { it.idx == i }
+                            Row(
+                                Modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(10.dp))
+                                    .background(if (m != null) Fuse.accent(dark).copy(alpha = 0.10f) else Color.Transparent)
+                                    .clickable {
+                                        CommuteService.instance?.markStop(i)
+                                        pickStop = false
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(stopNames[i], color = Fuse.ink(dark), fontSize = 15.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                if (m != null) {
+                                    Text("✓ ${clockOf(m.at)}", color = Fuse.accent(dark), fontSize = 13.sp)
+                                } else if (i == here) {
+                                    Text("当前", color = Fuse.dim(dark), fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                    val lastMark = stopMarks.lastOrNull()
+                    if (lastMark != null) {
+                        Row(Modifier.padding(top = 6.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("上次打卡：${stopNames.getOrNull(lastMark.idx) ?: "已过站"} ${clockOf(lastMark.at)}",
+                                color = Fuse.dim(dark), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            Text("撤销", color = Fuse.accent(dark), fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp))
+                                    .clickable { CommuteService.instance?.undoLastStopMark() }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp))
+                        }
+                    }
+                }
+            },
+            confirmButton = { DialogButton("关闭", onClick = { pickStop = false }) },
+        )
     }
 }
 
@@ -314,11 +494,13 @@ fun NodeTimeline(
     dark: Boolean,
     onTap: (NodeLog.NodeRef) -> Unit,
     onLongPress: (NodeLog.NodeRef, Long) -> Unit,
+    onDelete: ((NodeLog.NodeRef) -> Unit)? = null,
 ) {
     if (trip == null) return
     val eff = remember(nodes) { NodeLog.effective(nodes) }
     val refs = remember(trip) { NodeLog.timeline(trip) }
     var editing by remember { mutableStateOf<Pair<NodeLog.NodeRef, Int>?>(null) }
+    var askClear by remember { mutableStateOf<NodeLog.NodeRef?>(null) }
     val ink = Fuse.ink(dark)
     val chipBg = if (dark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
 
@@ -331,7 +513,7 @@ fun NodeTimeline(
             val isCur = current == ref
             val dup = refs.count { it.kind == ref.kind } > 1
             val label = NodeLog.label(ref.kind) + if (dup && ref.kind in listOf(NodeLog.Kind.ENTER, NodeLog.Kind.BOARD, NodeLog.Kind.ALIGHT, NodeLog.Kind.EXIT)) " ${ref.leg + 1}" else ""
-            val estimated = st?.src == NodeLog.Src.ESTIMATED
+            val estimated = st?.src == NodeLog.Src.ESTIMATED || st?.src == NodeLog.Src.AUTO
             val timeColor = when {
                 isCur -> Fuse.Yellow
                 st == null -> ink.copy(alpha = 0.35f)
@@ -343,15 +525,25 @@ fun NodeTimeline(
             }
             Column(
                 Modifier
+                    .minimumInteractiveComponentSize()
                     .widthIn(min = 54.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (isCur) Fuse.Yellow.copy(alpha = 0.16f) else chipBg)
                     .then(if (isCur) Modifier.border(1.dp, Fuse.Yellow, RoundedCornerShape(10.dp)) else Modifier)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = label + " " + (st?.let { (if (estimated) "约" else "") + hhmm(it.at) } ?: "未记录") +
+                            if (isCur) " 当前" else ""
+                    }
                     .pointerInput(ref, st, editable) {
                         detectTapGestures(
                             onTap = { if (editable) onTap(ref) },
                             onLongPress = {
-                                if (editable) editing = ref to minuteOf(st?.at ?: System.currentTimeMillis())
+                                if (editable) {
+                                    // 已有记录的节点：先问「改时间还是删掉」，避免补录错了没法回头
+                                    if (onDelete != null && st != null) askClear = ref
+                                    else editing = ref to minuteOf(st?.at ?: System.currentTimeMillis())
+                                }
                             },
                         )
                     }
@@ -366,6 +558,28 @@ fun NodeTimeline(
                 )
             }
         }
+    }
+
+    askClear?.let { ref ->
+        val at = eff[ref]?.at ?: System.currentTimeMillis()
+        AlertDialog(
+            onDismissRequest = { askClear = null },
+            shape = DialogShape, containerColor = Fuse.surface(dark),
+            title = { Text("${NodeLog.label(ref.kind)} ${hhmm(at)}") },
+            text = { Text("这条已记下。可以改时间，也可以删掉重新补录。") },
+            confirmButton = {
+                DialogButton("改时间", primary = true, onClick = {
+                    askClear = null
+                    editing = ref to minuteOf(at)
+                })
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    DialogButton("删除", danger = true, onClick = { askClear = null; onDelete?.invoke(ref) })
+                    DialogButton("取消", onClick = { askClear = null })
+                }
+            },
+        )
     }
 
     editing?.let { (ref, minute) ->
@@ -387,6 +601,9 @@ fun RecentRunCard(trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean) {
     val ctx = LocalContext.current
     var list by remember { mutableStateOf(nodes) }
     androidx.compose.runtime.LaunchedEffect(nodes) { list = nodes }
+    val first = nodes.minOfOrNull { it.at }
+    val last = nodes.maxOfOrNull { it.at }
+    val durMin = if (first != null && last != null) ((last - first) / 60_000L).toInt() else 0
     Column(Modifier.fillMaxWidth().board(dark).padding(16.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             // 看板底色永远是深色，文字固定白色，不能跟随主题的 ink
@@ -394,7 +611,14 @@ fun RecentRunCard(trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean) {
             Spacer(Modifier.width(8.dp))
             Text(trip.name, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text("长按节点可补录", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
+            Text("长按节点可改/删", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
+        }
+        if (first != null && last != null) {
+            Text(
+                dayLabel(first) + " · " + hhmm(first) + "–" + hhmm(last) + " · 全程 " + durMin.coerceAtLeast(1) + " 分钟",
+                color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp), style = Tnum,
+            )
         }
         NodeTimeline(
             trip = trip, nodes = list, current = null, editable = true, dark = true,
@@ -404,7 +628,25 @@ fun RecentRunCard(trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean) {
                 NodeLog.updateLast(ctx, next)
                 list = next
             },
+            onDelete = { ref ->
+                val next = list.filterNot { it.kind == ref.kind && it.leg == ref.leg }
+                NodeLog.updateLast(ctx, next)
+                list = next
+            },
         )
+    }
+}
+
+/** 7 天内的日期说「今天 / 昨天」，更早的写「M 月 d 日」 */
+private fun dayLabel(at: Long): String {
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = at }
+    val today = java.util.Calendar.getInstance()
+    val days = ((today.timeInMillis - at) / 86_400_000L).toInt()
+    return when {
+        days <= 0 -> "今天"
+        days == 1 -> "昨天"
+        days == 2 -> "前天"
+        else -> "${cal.get(java.util.Calendar.MONTH) + 1} 月 ${cal.get(java.util.Calendar.DAY_OF_MONTH)} 日"
     }
 }
 

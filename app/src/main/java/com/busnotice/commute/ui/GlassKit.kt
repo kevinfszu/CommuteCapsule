@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.only
@@ -49,6 +50,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldColors
 import androidx.compose.material3.TextFieldDefaults
@@ -137,13 +139,19 @@ fun GlassTopBar(title: String, onBack: () -> Unit, dark: Boolean, scrolled: Bool
 
 /** 圆形半透明小按钮（返回、「⋯」） */
 @Composable
-fun RoundButton(onClick: () -> Unit, dark: Boolean, size: Dp = 40.dp, content: @Composable () -> Unit) {
+fun RoundButton(
+    onClick: () -> Unit, dark: Boolean, size: Dp = 40.dp,
+    modifier: Modifier = Modifier, content: @Composable () -> Unit,
+) {
     Box(
-        Modifier.size(size).clip(CircleShape)
-            .background(Color.White.copy(alpha = if (dark) 0.10f else 0.6f))
-            .clickable(role = Role.Button, onClick = onClick),
+        modifier.minimumInteractiveComponentSize().clip(CircleShape).clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { content() }
+    ) {
+        Box(
+            Modifier.size(size).clip(CircleShape).background(Color.White.copy(alpha = if (dark) 0.10f else 0.6f)),
+            contentAlignment = Alignment.Center,
+        ) { content() }
+    }
 }
 
 /** 主操作胶囊：浅色模式深色、深色模式黄色；secondary = 半透明白色带细边 */
@@ -174,13 +182,18 @@ fun PillButton(
 
 /** 选择胶囊：选中 = 深色/黄色实心，未选 = 半透明白色带细边 */
 @Composable
-fun GlassChip(selected: Boolean, onClick: () -> Unit, label: String, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun GlassChip(
+    selected: Boolean, onClick: () -> Unit, label: String, modifier: Modifier = Modifier,
+    enabled: Boolean = true, minTouch: Boolean = true,
+) {
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
     val bg = if (selected) Fuse.accent(dark) else Color.White.copy(alpha = if (dark) 0.08f else 0.5f)
     val border = if (selected) Color.Transparent else if (dark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f)
+    // 默认扩到 48dp 触摸区；宽度受限的等分场景（如 7 个星期）改用 48dp 最小高度
+    val touch = if (minTouch) modifier.minimumInteractiveComponentSize() else modifier.heightIn(min = 48.dp)
     Box(
-        modifier.clip(CircleShape).background(bg).border(1.dp, border, CircleShape)
+        touch.clip(CircleShape).background(bg).border(1.dp, border, CircleShape)
             .selectable(selected = selected, enabled = enabled, role = Role.Checkbox, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
@@ -315,11 +328,18 @@ fun glassFieldColors(dark: Boolean): TextFieldColors {
 
 /** 对话框里的文字按钮：确认用主色（浅色深、深色黄），其它用正文色 */
 @Composable
-fun DialogButton(text: String, onClick: () -> Unit, enabled: Boolean = true, primary: Boolean = false) {
+fun DialogButton(
+    text: String, onClick: () -> Unit, enabled: Boolean = true,
+    primary: Boolean = false, danger: Boolean = false,
+) {
     val dark = isSystemInDarkTheme()
-    val c = if (primary) (if (dark) Fuse.Yellow else Fuse.Night) else Fuse.dim(dark)
+    val c = when {
+        danger -> Fuse.MetroRed
+        primary -> if (dark) Fuse.Yellow else Fuse.Night
+        else -> Fuse.dim(dark)
+    }
     TextButton(onClick = onClick, enabled = enabled, shape = CircleShape) {
-        Text(text, color = if (enabled) c else c.copy(alpha = 0.4f), fontWeight = if (primary) FontWeight.Bold else FontWeight.Normal)
+        Text(text, color = if (enabled) c else c.copy(alpha = 0.4f), fontWeight = if (primary || danger) FontWeight.Bold else FontWeight.Normal)
     }
 }
 

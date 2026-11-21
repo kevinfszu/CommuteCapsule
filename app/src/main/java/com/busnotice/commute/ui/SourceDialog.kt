@@ -5,8 +5,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -73,7 +74,7 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
         title = { Text("数据源") },
         text = {
             Column(
-                Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text("线路和站点：$sourceTitle", fontSize = 14.sp)
@@ -144,14 +145,14 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                     "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",
                     fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
                 )
+                Spacer(Modifier.height(12.dp))
             }
         },
         confirmButton = {
-            DialogButton("保存", primary = true, onClick = {
+            DialogButton("完成", primary = true, onClick = {
                 if (region.trim() != Transit.region) Transit.setRegion(ctx, region)
                 onDismiss()
             })
         },
-        dismissButton = { DialogButton("关闭", onClick = onDismiss) },
     )
 }
