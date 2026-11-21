@@ -319,7 +319,7 @@ object AmapData {
     private fun errText(info: String, code: String): String = when (info) {
         "INVALID_USER_KEY" -> "高德 Key 无效，请检查是否填错"
         "INVALID_USER_SCODE" -> "这个 Key 开启了数字签名校验，请在控制台关闭签名或换一个未开启签名的 Key"
-        "SERVICE_NOT_AVAILABLE" -> "这个 Key 没有开通「公交信息查询」服务"
+        "SERVICE_NOT_AVAILABLE" -> "这个 Key 没有开通「公交信息查询 API」服务，请在控制台开通"
         "DAILY_QUERY_OVER_LIMIT" -> "这个 Key 今天的查询次数已用完"
         "INVALID_USER_IP" -> "这个 Key 绑定了 IP 白名单，请在控制台取消限制"
         else -> "高德返回错误：${info.ifBlank { "未知错误" }}（${code.ifBlank { "无错误码" }}）"

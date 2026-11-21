@@ -161,6 +161,10 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                 Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                Text(
+                    "使用高德「公交信息查询 API」：需先注册为高德开发者，并在控制台创建「Web 服务」类型的 Key。",
+                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                )
                 GlassField(
                     key, { key = it }, label = "高德 Key",
                     supportingText = { Text("高德开放平台 → 应用管理 → Web 服务 Key（只存本机）") },
