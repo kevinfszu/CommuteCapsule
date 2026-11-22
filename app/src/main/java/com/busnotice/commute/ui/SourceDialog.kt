@@ -36,13 +36,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** 「数据源」：看当前用的是哪个数据源、改区域编号、运行时导入 JSON */
+/** 「数据源」：看当前用的是哪个数据源、运行时导入 JSON 或在线生成 */
 @Composable
 fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val ink = Fuse.ink(dark)
-    var region by remember { mutableStateOf(Transit.region) }
     var version by remember { mutableStateOf(0) }
     var importing by remember { mutableStateOf(false) }
     var amapOpen by remember { mutableStateOf(false) }
@@ -70,7 +69,6 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
             importing = false
             result.onSuccess {
                 version++
-                region = Transit.region
                 lastImport = "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点"
                 confirmDelete = false
                 Toast.makeText(
@@ -120,10 +118,6 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                         }
                     }
                 }
-                GlassField(
-                    region, { region = it }, label = "区域编号",
-                    supportingText = { Text("数据源自带的城市编号，仅在更换城市时修改") },
-                )
                 PillButton(
                     onClick = { picker.launch(arrayOf("*/*")) },
                     modifier = Modifier.fillMaxWidth(),
@@ -161,7 +155,6 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                             DialogButton("确认删除", danger = true, onClick = {
                                 Transit.clearImported(ctx)
                                 version++
-                                region = Transit.region
                                 Toast.makeText(ctx, "已恢复默认数据源", Toast.LENGTH_SHORT).show()
                                 lastImport = null
                                 confirmDelete = false
@@ -177,10 +170,7 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            DialogButton("完成", primary = true, onClick = {
-                if (region.trim() != Transit.region) Transit.setRegion(ctx, region)
-                onDismiss()
-            })
+            DialogButton("完成", primary = true, onClick = onDismiss)
         },
     )
 
@@ -191,7 +181,6 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
             onImported = {
                 amapOpen = false
                 version++
-                region = Transit.region
             },
         )
     }

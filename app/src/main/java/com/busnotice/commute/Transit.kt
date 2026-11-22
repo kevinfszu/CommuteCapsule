@@ -165,7 +165,8 @@ object Transit {
         }
     }
 
-    fun setRegion(ctx: Context, r: String) {
+    /** 导入数据自带区域编号时自动记录（不对外提供手动修改） */
+    private fun setRegion(ctx: Context, r: String) {
         region = r.trim()
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_REGION, region).apply()
     }
