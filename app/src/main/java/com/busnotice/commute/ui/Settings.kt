@@ -37,13 +37,17 @@ import com.busnotice.commute.Updater
 
 /** 设置：权限、数据源、更新、导出、演示，都从首页一次点击进来 */
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit = {}, onOpenLearn: () -> Unit = {}) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenRecords: () -> Unit = {},
+    onOpenLearn: () -> Unit = {},
+    onOpenSource: () -> Unit = {},
+) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
     val dim = Fuse.dim(dark)
     var version by remember { mutableStateOf(0) }
-    var sourceOpen by remember { mutableStateOf(false) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { version++ }
     val perms = remember(version) { permChecks(ctx) { p -> launcher.launch(p) } }
     val days = remember(version) { TraceLog.dayCount(ctx) }
@@ -70,7 +74,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit = {}, onOpenLea
                     headline = "数据源",
                     supporting = "线路、站点与实时到站的来源",
                     leading = { Icon(Icons.Default.Place, null, tint = dim, modifier = Modifier.size(20.dp)) },
-                    onClick = { sourceOpen = true },
+                    onClick = onOpenSource,
                 )
             }
         }
@@ -135,6 +139,4 @@ fun SettingsScreen(onBack: () -> Unit, onOpenRecords: () -> Unit = {}, onOpenLea
             )
         }
     }
-
-    if (sourceOpen) SourceDialog(dark) { sourceOpen = false }
 }

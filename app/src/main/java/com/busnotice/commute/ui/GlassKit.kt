@@ -88,6 +88,7 @@ fun GlassPage(
     actions: @Composable RowScope.() -> Unit = {},
     state: LazyListState = rememberLazyListState(),
     horizontalPadding: Dp = 16.dp,
+    bottomBar: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     val dark = isSystemInDarkTheme()
@@ -107,6 +108,14 @@ fun GlassPage(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     content = content,
                 )
+                if (bottomBar != null) {
+                    Box(
+                        Modifier.fillMaxWidth().windowInsetsPadding(
+                            WindowInsets.navigationBars.union(WindowInsets.displayCutout)
+                                .only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+                        ).padding(horizontal = horizontalPadding, vertical = 10.dp),
+                    ) { bottomBar() }
+                }
             }
         }
     }

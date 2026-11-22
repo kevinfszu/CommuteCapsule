@@ -18,6 +18,8 @@ sealed interface Screen {
     data object Settings : Screen
     data object Records : Screen
     data object Learn : Screen
+    data object DataSource : Screen
+    data object AmapImport : Screen
     data object Edit : Screen
     data class PickBus(val legIndex: Int) : Screen
     data class PickMetro(val legIndex: Int) : Screen
@@ -48,7 +50,17 @@ fun App(resumeTick: Int) {
         screen = Screen.Edit
     }
 
-    BackHandler(enabled = screen != Screen.Home) { screen = Screen.Home }
+    // 系统返回键：回退一级（设置下的二级页回设置，高德生成页回数据源）
+    fun goBack() {
+        screen = when (screen) {
+            Screen.Settings -> Screen.Home
+            Screen.Records, Screen.Learn, Screen.DataSource -> Screen.Settings
+            Screen.AmapImport -> Screen.DataSource
+            else -> Screen.Home
+        }
+    }
+
+    BackHandler(enabled = screen != Screen.Home) { goBack() }
 
     when (val s = screen) {
         Screen.Home -> HomeScreen(
@@ -65,9 +77,18 @@ fun App(resumeTick: Int) {
             onBack = { screen = Screen.Home },
             onOpenRecords = { screen = Screen.Records },
             onOpenLearn = { screen = Screen.Learn },
+            onOpenSource = { screen = Screen.DataSource },
         )
         Screen.Records -> RecordsScreen(onBack = { screen = Screen.Settings })
         Screen.Learn -> LearnScreen(onBack = { screen = Screen.Settings })
+        Screen.DataSource -> SourceScreen(
+            onBack = { screen = Screen.Settings },
+            onOpenAmap = { screen = Screen.AmapImport },
+        )
+        Screen.AmapImport -> AmapImportScreen(
+            onBack = { screen = Screen.DataSource },
+            onDone = { screen = Screen.DataSource },
+        )
         Screen.Edit -> TripEditor(
             trip = draft,
             dirty = dirty,

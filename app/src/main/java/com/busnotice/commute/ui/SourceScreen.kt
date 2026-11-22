@@ -4,18 +4,14 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -38,18 +34,18 @@ import kotlinx.coroutines.withContext
 
 /** 「数据源」：看当前用的是哪个数据源、运行时导入 JSON 或在线生成 */
 @Composable
-fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
+fun SourceScreen(onBack: () -> Unit, onOpenAmap: () -> Unit) {
     val ctx = LocalContext.current
+    val dark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
     val ink = Fuse.ink(dark)
+    val dim = Fuse.dim(dark)
     var version by remember { mutableStateOf(0) }
     var importing by remember { mutableStateOf(false) }
-    var amapOpen by remember { mutableStateOf(false) }
     var lastImport by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     val sourceTitle = remember(version) { Transit.static.title }
     val hasImport = remember(version) { ImportedJsonSource.hasData }
-    val lineNames = remember(version) { ImportedJsonSource.lineNames }
     val lineStations = remember(version) { ImportedJsonSource.lineStations }
     val meta = remember(version) { ImportedJsonSource.meta }
 
@@ -80,66 +76,94 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
         }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = DialogShape, containerColor = Fuse.surface(dark), titleContentColor = ink, textContentColor = ink,
-        title = { Text("数据源") },
-        text = {
-            Column(
-                Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                lastImport?.let { msg ->
-                    Text(
-                        msg,
-                        fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Fuse.accent(dark),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                    )
+    GlassPage(title = "数据源", onBack = onBack) {
+        lastImport?.let { msg ->
+            item {
+                GlassCard {
+                    Text(msg, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Fuse.accent(dark))
                 }
-                Text("线路和站点：$sourceTitle", fontSize = 14.sp)
-                Text("实时到站：${Transit.realtime?.title ?: "无（使用学习到的时刻表与估算数据）"}", fontSize = 14.sp)
-                if (hasImport) {
-                    SectionLabel("已导入的线路（${lineNames.size} 条）")
+            }
+        }
+        item {
+            GlassCard {
+                SectionLabel("当前数据源")
+                Text("线路和站点：$sourceTitle", fontSize = 14.sp, color = ink, modifier = Modifier.padding(top = 8.dp))
+                Text(
+                    "实时到站：${Transit.realtime?.title ?: "无（使用学习到的时刻表与估算数据）"}",
+                    fontSize = 14.sp, color = ink, modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        item {
+            GlassCard {
+                SectionLabel(if (hasImport) "已导入的线路（${lineStations.size} 条）" else "已导入的线路")
+                if (!hasImport) {
+                    Text(
+                        "当前使用内置演示线路，导入后立即替换。",
+                        fontSize = 13.sp, color = dim, modifier = Modifier.padding(top = 8.dp),
+                    )
+                } else {
                     Column(
-                        Modifier.fillMaxWidth().heightIn(max = 168.dp).verticalScroll(rememberScrollState()),
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         lineStations.forEach { (name, stationN) ->
                             Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                    .background(Fuse.ink(dark).copy(alpha = 0.05f))
+                                    .background(ink.copy(alpha = 0.05f))
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = ink)
                                 Spacer(Modifier.weight(1f))
-                                Text("${stationN} 站", fontSize = 12.sp, color = Fuse.dim(dark))
+                                Text("$stationN 站", fontSize = 12.sp, color = dim)
                             }
                         }
                     }
                 }
-                PillButton(
-                    onClick = { picker.launch(arrayOf("*/*")) },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !importing,
-                    secondary = true,
-                ) { Text(if (importing) "导入中…" else "导入 JSON 文件") }
-                PillButton(
-                    onClick = { amapOpen = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !importing,
-                    secondary = true,
-                ) { Text("用高德查询并生成") }
-                if (meta != null) {
+            }
+        }
+        item {
+            GlassCard {
+                SectionLabel("导入或生成")
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    PillButton(
+                        onClick = { picker.launch(arrayOf("*/*")) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !importing,
+                        secondary = true,
+                    ) { Text(if (importing) "导入中…" else "导入 JSON 文件") }
+                    PillButton(
+                        onClick = onOpenAmap,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !importing,
+                        secondary = true,
+                    ) { Text("用高德查询并生成") }
+                }
+            }
+        }
+        if (meta != null) {
+            item {
+                GlassCard {
+                    SectionLabel("数据说明")
                     if (meta.source.isNotBlank()) Text(
                         "数据：${meta.source}" + (if (meta.updated.isNotBlank()) "（${meta.updated}）" else ""),
-                        fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                        fontSize = 12.sp, lineHeight = 17.sp, color = dim, modifier = Modifier.padding(top = 6.dp),
                     )
                     if (meta.note.isNotBlank()) Text(
-                        meta.note, fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                        meta.note, fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                        modifier = Modifier.padding(top = 2.dp),
                     )
                 }
-                if (hasImport) {
+            }
+        }
+        if (hasImport) {
+            item {
+                GlassCard {
+                    SectionLabel("危险操作")
                     if (!confirmDelete) {
                         DialogButton(
                             "删除导入数据并恢复默认", danger = true,
@@ -148,7 +172,8 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                     } else {
                         Text(
                             "删除后回到默认数据，已导入的线路会全部移除。",
-                            fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                            fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                            modifier = Modifier.padding(top = 6.dp),
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             DialogButton("取消", onClick = { confirmDelete = false })
@@ -162,26 +187,14 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                         }
                     }
                 }
-                Text(
-                    "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",
-                    fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
-                )
-                Spacer(Modifier.height(12.dp))
             }
-        },
-        confirmButton = {
-            DialogButton("完成", primary = true, onClick = onDismiss)
-        },
-    )
-
-    if (amapOpen) {
-        AmapImportDialog(
-            dark = dark,
-            onDismiss = { amapOpen = false },
-            onImported = {
-                amapOpen = false
-                version++
-            },
-        )
+        }
+        item {
+            Text(
+                "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",
+                fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
     }
 }

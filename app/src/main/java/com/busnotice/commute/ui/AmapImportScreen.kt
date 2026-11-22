@@ -3,18 +3,14 @@ package com.busnotice.commute.ui
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.RadioButton
@@ -35,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.busnotice.commute.AmapClient
 import com.busnotice.commute.AmapData
-import com.busnotice.commute.ImportSummary
 import com.busnotice.commute.ImportedJsonSource
 import com.busnotice.commute.Transit
 import kotlinx.coroutines.Dispatchers
@@ -59,11 +54,13 @@ private fun parseClock(raw: String): Int? {
  * 每次生成一条线路（含反向），同名线路覆盖已有导入数据。
  */
 @Composable
-fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSummary) -> Unit) {
+fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
     val ctx = LocalContext.current
+    val dark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
     val ink = Fuse.ink(dark)
     val dim = Fuse.dim(dark)
+    val listState = rememberLazyListState()
 
     var key by remember { mutableStateOf(Transit.amapKey()) }
     var city by remember { mutableStateOf(Transit.amapCity()) }
@@ -84,11 +81,10 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
     val sel = hits.firstOrNull { it.amapId == selectedId }
     val rev = sel?.let { AmapData.reverseOf(it, hits) }
     val stops = remember(selectedId, raw) { sel?.let { s -> raw?.let { AmapData.stopsOf(it, s) } }.orEmpty() }
-    val contentScroll = rememberScrollState()
 
     fun fail(msg: String) {
         error = msg
-        scope.launch { contentScroll.animateScrollTo(0) }
+        scope.launch { listState.animateScrollToItem(0) }
     }
 
     fun select(h: AmapData.Hit) {
@@ -153,22 +149,27 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                 Transit.setAmapKey(ctx, key)
                 Transit.setAmapCity(ctx, city)
                 Toast.makeText(ctx, "已生成，当前共 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG).show()
-                onImported(it)
+                onDone()
             }.onFailure { fail(it.message ?: "生成失败") }
         }
     }
 
     val canGenerate = sel != null && keepStops.size >= 2 && !generating && !searching
 
-    AlertDialog(
-        onDismissRequest = { if (!generating) onDismiss() },
-        shape = DialogShape, containerColor = Fuse.surface(dark), titleContentColor = ink, textContentColor = ink,
-        title = { Text("用高德生成数据源") },
-        text = {
-            Column(
-                Modifier.heightIn(max = 460.dp).verticalScroll(contentScroll),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+    GlassPage(
+        title = "用高德生成",
+        onBack = { if (!generating) onBack() },
+        state = listState,
+        bottomBar = {
+            PillButton(
+                onClick = { generate() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = canGenerate,
+            ) { Text(if (generating) "生成中…" else "生成并导入") }
+        },
+    ) {
+        item {
+            GlassCard {
                 Text(
                     "使用高德「公交信息查询 API」：需先注册为高德开发者，并在控制台创建「Web 服务」类型的 Key。",
                     fontSize = 12.sp, lineHeight = 17.sp, color = dim,
@@ -177,33 +178,47 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                     Text(
                         msg,
                         fontSize = 13.sp, lineHeight = 18.sp, color = Fuse.MetroRed,
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .background(Fuse.MetroRed.copy(alpha = 0.10f))
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                     )
                 }
-                GlassField(
-                    key, { key = it }, label = "高德 Key",
-                    supportingText = { Text("高德开放平台 → 应用管理 → Web 服务 Key（只存本机）") },
-                    singleLine = true,
-                )
-                GlassField(
-                    city, { city = it }, label = "城市",
-                    supportingText = { Text("城市名或 adcode，如 广州 / 440100") },
-                    singleLine = true,
-                )
-                GlassField(
-                    keywords, { keywords = it }, label = "线路关键字",
-                    placeholder = "如 13号线",
-                    singleLine = true,
-                )
-                PillButton(
-                    onClick = { search() },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !searching && !generating && key.isNotBlank() && city.isNotBlank() && keywords.isNotBlank(),
-                ) { Text(if (searching) "查询中…" else "查询") }
-
-                if (hits.isNotEmpty()) {
+            }
+        }
+        item {
+            GlassCard {
+                SectionLabel("查询线路")
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    GlassField(
+                        key, { key = it }, label = "高德 Key",
+                        supportingText = { Text("高德开放平台 → 应用管理 → Web 服务 Key（只存本机）") },
+                        singleLine = true,
+                    )
+                    GlassField(
+                        city, { city = it }, label = "城市",
+                        supportingText = { Text("城市名或 adcode，如 广州 / 440100") },
+                        singleLine = true,
+                    )
+                    GlassField(
+                        keywords, { keywords = it }, label = "线路关键字",
+                        placeholder = "如 13号线",
+                        singleLine = true,
+                    )
+                    PillButton(
+                        onClick = { search() },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !searching && !generating && key.isNotBlank() && city.isNotBlank() && keywords.isNotBlank(),
+                    ) { Text(if (searching) "查询中…" else "查询") }
+                }
+            }
+        }
+        if (hits.isNotEmpty()) {
+            item {
+                GlassCard {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         SectionLabel("选择方向（会自动带上反方向）", Modifier.weight(1f))
                         if (sel != null) DialogButton("换一条", onClick = {
@@ -212,10 +227,13 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                             error = null
                         })
                     }
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
                         (if (sel != null) listOf(sel) else hits).forEach { h ->
                             val on = h.amapId == selectedId
-                            val bg = if (on) Fuse.accent(dark).copy(alpha = 0.16f) else Fuse.ink(dark).copy(alpha = 0.05f)
+                            val bg = if (on) Fuse.accent(dark).copy(alpha = 0.16f) else ink.copy(alpha = 0.05f)
                             Column(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(bg)
                                     .clickable(enabled = !generating) { select(h) }
@@ -245,18 +263,19 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                         }
                     }
                 }
-
-                if (sel != null) {
-                    Spacer(Modifier.height(2.dp))
+            }
+        }
+        if (sel != null) {
+            item {
+                GlassCard {
                     SectionLabel("站点（未开通的车站请取消勾选）")
                     Text(
                         "已选 ${keepStops.size}/${stops.size} 站" +
                             if (keepStops.size < 2) " · 至少保留 2 站" else "",
                         fontSize = 12.sp, color = if (keepStops.size < 2) Fuse.MetroRed else dim,
+                        modifier = Modifier.padding(top = 4.dp),
                     )
-                    Column(
-                        Modifier.fillMaxWidth().heightIn(max = 190.dp).verticalScroll(rememberScrollState()),
-                    ) {
+                    Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
                         stops.forEach { s ->
                             Row(
                                 Modifier.fillMaxWidth().clickable(enabled = !generating) {
@@ -276,9 +295,16 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                             }
                         }
                     }
-
+                }
+            }
+            item {
+                GlassCard {
                     SectionLabel("单站用时（高德没有，按整条线填一个值）")
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top,
+                    ) {
                         GlassField(
                             hopMin, { hopMin = it.filter { c -> c.isDigit() }.take(2) },
                             label = "分", modifier = Modifier.weight(1f),
@@ -288,15 +314,14 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                             label = "秒", modifier = Modifier.weight(1f),
                         )
                     }
-                    Text("影响站点首末班与到站推算，20–900 秒", fontSize = 12.sp, color = dim)
+                    Text("影响站点首末班与到站推算，20–900 秒", fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 4.dp))
 
-                    Spacer(Modifier.height(2.dp))
-                    SectionLabel("始发站首末班")
+                    SectionLabel("始发站首末班", Modifier.padding(top = 12.dp))
                     listOfNotNull(sel, rev).forEach { d ->
                         val v = clocks[d.amapId] ?: (hm(d.firstMin) to hm(d.lastMin))
                         Text(
                             "开往 ${d.toStop}" + (if (d.dirLabel.isNotEmpty()) "（${d.dirLabel}）" else ""),
-                            fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 4.dp),
+                            fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 6.dp),
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
                             GlassField(
@@ -310,22 +335,14 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                         }
                     }
                 }
-
-                Text(
-                    "生成后会合并到已导入的数据里，同名线路（两个方向）被覆盖。",
-                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
-                )
-                Spacer(Modifier.height(4.dp))
             }
-        },
-        confirmButton = {
-            DialogButton(
-                if (generating) "生成中…" else "生成并导入",
-                primary = true, enabled = canGenerate, onClick = { generate() },
+        }
+        item {
+            Text(
+                "生成后会合并到已导入的数据里，同名线路（两个方向）被覆盖。",
+                fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                modifier = Modifier.padding(horizontal = 4.dp),
             )
-        },
-        dismissButton = {
-            DialogButton("取消", onClick = onDismiss, enabled = !generating)
-        },
-    )
+        }
+    }
 }
