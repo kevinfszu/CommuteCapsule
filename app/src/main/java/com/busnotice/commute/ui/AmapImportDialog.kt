@@ -204,9 +204,16 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                 ) { Text(if (searching) "查询中…" else "查询") }
 
                 if (hits.isNotEmpty()) {
-                    SectionLabel("选择方向（会自动带上反方向）")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SectionLabel("选择方向（会自动带上反方向）", Modifier.weight(1f))
+                        if (sel != null) DialogButton("换一条", onClick = {
+                            selectedId = null
+                            keepStops = emptySet()
+                            error = null
+                        })
+                    }
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        hits.forEach { h ->
+                        (if (sel != null) listOf(sel) else hits).forEach { h ->
                             val on = h.amapId == selectedId
                             val bg = if (on) Fuse.accent(dark).copy(alpha = 0.16f) else Fuse.ink(dark).copy(alpha = 0.05f)
                             Column(
