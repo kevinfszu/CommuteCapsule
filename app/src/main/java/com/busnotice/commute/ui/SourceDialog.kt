@@ -46,14 +46,18 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
     var version by remember { mutableStateOf(0) }
     var importing by remember { mutableStateOf(false) }
     var amapOpen by remember { mutableStateOf(false) }
+    var lastImport by remember { mutableStateOf<String?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
     val sourceTitle = remember(version) { Transit.static.title }
     val hasImport = remember(version) { ImportedJsonSource.hasData }
     val lineNames = remember(version) { ImportedJsonSource.lineNames }
+    val lineStations = remember(version) { ImportedJsonSource.lineStations }
     val meta = remember(version) { ImportedJsonSource.meta }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         importing = true
+        lastImport = null
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
@@ -67,6 +71,8 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
             result.onSuccess {
                 version++
                 region = Transit.region
+                lastImport = "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点"
+                confirmDelete = false
                 Toast.makeText(
                     ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG,
                 ).show()
@@ -85,6 +91,13 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                lastImport?.let { msg ->
+                    Text(
+                        msg,
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Fuse.accent(dark),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    )
+                }
                 Text("线路和站点：$sourceTitle", fontSize = 14.sp)
                 Text("实时到站：${Transit.realtime?.title ?: "无（使用学习到的时刻表与估算数据）"}", fontSize = 14.sp)
                 if (hasImport) {
@@ -93,7 +106,7 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                         Modifier.fillMaxWidth().heightIn(max = 168.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        lineNames.forEach { name ->
+                        lineStations.forEach { (name, stationN) ->
                             Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
                                     .background(Fuse.ink(dark).copy(alpha = 0.05f))
@@ -101,6 +114,8 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(name, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = ink)
+                                Spacer(Modifier.weight(1f))
+                                Text("${stationN} 站", fontSize = 12.sp, color = Fuse.dim(dark))
                             }
                         }
                     }
@@ -131,16 +146,28 @@ fun SourceDialog(dark: Boolean, onDismiss: () -> Unit) {
                     )
                 }
                 if (hasImport) {
-                    PillButton(
-                        onClick = {
-                            Transit.clearImported(ctx)
-                            version++
-                            region = Transit.region
-                            Toast.makeText(ctx, "已恢复默认数据源", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        secondary = true,
-                    ) { Text("删除导入数据并恢复默认") }
+                    if (!confirmDelete) {
+                        DialogButton(
+                            "删除导入数据并恢复默认", danger = true,
+                            onClick = { confirmDelete = true },
+                        )
+                    } else {
+                        Text(
+                            "删除后回到默认数据，已导入的线路会全部移除。",
+                            fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            DialogButton("取消", onClick = { confirmDelete = false })
+                            DialogButton("确认删除", danger = true, onClick = {
+                                Transit.clearImported(ctx)
+                                version++
+                                region = Transit.region
+                                Toast.makeText(ctx, "已恢复默认数据源", Toast.LENGTH_SHORT).show()
+                                lastImport = null
+                                confirmDelete = false
+                            })
+                        }
+                    }
                 }
                 Text(
                     "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",

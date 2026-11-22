@@ -22,6 +22,10 @@ object ImportedJsonSource : StaticSource {
 
     /** 已导入的线路名（正反方向合并为一条） */
     val lineNames: List<String> get() = doc?.lines?.map { it.name }?.distinct() ?: emptyList()
+
+    /** 已导入线路及站数（正反方向合并，取站数较多的方向） */
+    val lineStations: List<Pair<String, Int>>
+        get() = doc?.lines?.groupBy { it.name }?.map { (n, ls) -> n to (ls.maxOfOrNull { it.stops.size } ?: 0) } ?: emptyList()
     val meta: JsonTransit.Meta? get() = doc?.let { JsonTransit.Meta(it.source, it.updated, it.note) }
 
     override val id = "imported"

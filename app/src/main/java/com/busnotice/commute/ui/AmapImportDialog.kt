@@ -17,6 +17,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -82,6 +84,12 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
     val sel = hits.firstOrNull { it.amapId == selectedId }
     val rev = sel?.let { AmapData.reverseOf(it, hits) }
     val stops = remember(selectedId, raw) { sel?.let { s -> raw?.let { AmapData.stopsOf(it, s) } }.orEmpty() }
+    val contentScroll = rememberScrollState()
+
+    fun fail(msg: String) {
+        error = msg
+        scope.launch { contentScroll.animateScrollTo(0) }
+    }
 
     fun select(h: AmapData.Hit) {
         selectedId = h.amapId
@@ -108,10 +116,10 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                 runCatching { AmapData.parseHits(text) }
                     .onSuccess {
                         hits = it
-                        if (it.isEmpty()) error = "没有找到匹配的线路，换个关键字或城市试试"
+                        if (it.isEmpty()) fail("没有找到匹配的线路，换个关键字或城市试试")
                     }
-                    .onFailure { error = it.message }
-            }.onFailure { error = it.message ?: "查询失败" }
+                    .onFailure { fail(it.message ?: "查询失败") }
+            }.onFailure { fail(it.message ?: "查询失败") }
         }
     }
 
@@ -119,16 +127,16 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
         val h = sel ?: return
         error = null
         val total = (hopMin.toIntOrNull() ?: -1) * 60 + (hopSec.toIntOrNull() ?: -1)
-        if (total !in 20..900) { error = "单站用时请填 20–900 秒"; return }
+        if (total !in 20..900) { fail("单站用时请填 20–900 秒"); return }
         val clockMin = HashMap<String, Pair<Int, Int>>()
         for ((id, v) in clocks) {
             val from = parseClock(v.first)
             val to = parseClock(v.second)
-            if (from == null || to == null) { error = "首末班时间格式应为 HH:mm"; return }
+            if (from == null || to == null) { fail("首末班时间格式应为 HH:mm"); return }
             clockMin[id] = from to to
         }
-        if (keepStops.size < 2) { error = "至少保留 2 个站点"; return }
-        val text = raw ?: run { error = "请先查询线路"; return }
+        if (keepStops.size < 2) { fail("至少保留 2 个站点"); return }
+        val text = raw ?: run { fail("请先查询线路"); return }
         generating = true
         scope.launch {
             val result = withContext(Dispatchers.IO) {
@@ -146,7 +154,7 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                 Transit.setAmapCity(ctx, city)
                 Toast.makeText(ctx, "已生成，当前共 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG).show()
                 onImported(it)
-            }.onFailure { error = it.message ?: "生成失败" }
+            }.onFailure { fail(it.message ?: "生成失败") }
         }
     }
 
@@ -158,13 +166,22 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
         title = { Text("用高德生成数据源") },
         text = {
             Column(
-                Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                Modifier.heightIn(max = 460.dp).verticalScroll(contentScroll),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
                     "使用高德「公交信息查询 API」：需先注册为高德开发者，并在控制台创建「Web 服务」类型的 Key。",
                     fontSize = 12.sp, lineHeight = 17.sp, color = dim,
                 )
+                error?.let { msg ->
+                    Text(
+                        msg,
+                        fontSize = 13.sp, lineHeight = 18.sp, color = Fuse.MetroRed,
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                            .background(Fuse.MetroRed.copy(alpha = 0.10f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                    )
+                }
                 GlassField(
                     key, { key = it }, label = "高德 Key",
                     supportingText = { Text("高德开放平台 → 应用管理 → Web 服务 Key（只存本机）") },
@@ -186,8 +203,6 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                     enabled = !searching && !generating && key.isNotBlank() && city.isNotBlank() && keywords.isNotBlank(),
                 ) { Text(if (searching) "查询中…" else "查询") }
 
-                error?.let { Text(it, fontSize = 13.sp, lineHeight = 18.sp, color = Fuse.MetroRed) }
-
                 if (hits.isNotEmpty()) {
                     SectionLabel("选择方向（会自动带上反方向）")
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -199,14 +214,26 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                                     .clickable(enabled = !generating) { select(h) }
                                     .padding(horizontal = 12.dp, vertical = 10.dp),
                             ) {
-                                Text(
-                                    h.name + (if (h.dirLabel.isNotEmpty()) " ${h.dirLabel}" else " · 开往 ${h.toStop}"),
-                                    fontSize = 15.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Normal, color = ink,
-                                )
-                                Text(
-                                    "${h.stopCount} 站 · ${hm(h.firstMin)}–${hm(h.lastMin)}",
-                                    fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 2.dp),
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(
+                                        selected = on, onClick = null,
+                                        colors = RadioButtonDefaults.colors(
+                                            selectedColor = Fuse.accent(dark), unselectedColor = dim,
+                                        ),
+                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            h.name + (if (h.dirLabel.isNotEmpty()) " ${h.dirLabel}" else " · 开往 ${h.toStop}"),
+                                            fontSize = 15.sp,
+                                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                                            color = ink,
+                                        )
+                                        Text(
+                                            "${h.stopCount} 站 · ${hm(h.firstMin)}–${hm(h.lastMin)}",
+                                            fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 2.dp),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -216,8 +243,9 @@ fun AmapImportDialog(dark: Boolean, onDismiss: () -> Unit, onImported: (ImportSu
                     Spacer(Modifier.height(2.dp))
                     SectionLabel("站点（未开通的车站请取消勾选）")
                     Text(
-                        "已选 ${keepStops.size}/${stops.size} 站",
-                        fontSize = 12.sp, color = dim,
+                        "已选 ${keepStops.size}/${stops.size} 站" +
+                            if (keepStops.size < 2) " · 至少保留 2 站" else "",
+                        fontSize = 12.sp, color = if (keepStops.size < 2) Fuse.MetroRed else dim,
                     )
                     Column(
                         Modifier.fillMaxWidth().heightIn(max = 190.dp).verticalScroll(rememberScrollState()),
