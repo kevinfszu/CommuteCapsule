@@ -18,7 +18,8 @@ sealed interface Screen {
     data object Settings : Screen
     data object Records : Screen
     data object Learn : Screen
-    data object DataSource : Screen
+    data object LineImport : Screen
+    data class LineDetail(val name: String) : Screen
     data object AmapImport : Screen
     data object Edit : Screen
     data class PickBus(val legIndex: Int) : Screen
@@ -50,12 +51,13 @@ fun App(resumeTick: Int) {
         screen = Screen.Edit
     }
 
-    // 系统返回键：回退一级（设置下的二级页回设置，高德生成页回数据源）
+    // 系统返回键：回退一级（设置下的二级页回设置，详情与高德生成页回线路导入）
     fun goBack() {
         screen = when (screen) {
             Screen.Settings -> Screen.Home
-            Screen.Records, Screen.Learn, Screen.DataSource -> Screen.Settings
-            Screen.AmapImport -> Screen.DataSource
+            Screen.Records, Screen.Learn, Screen.LineImport -> Screen.Settings
+            Screen.AmapImport -> Screen.LineImport
+            is Screen.LineDetail -> Screen.LineImport
             else -> Screen.Home
         }
     }
@@ -77,17 +79,23 @@ fun App(resumeTick: Int) {
             onBack = { screen = Screen.Home },
             onOpenRecords = { screen = Screen.Records },
             onOpenLearn = { screen = Screen.Learn },
-            onOpenSource = { screen = Screen.DataSource },
+            onOpenSource = { screen = Screen.LineImport },
         )
         Screen.Records -> RecordsScreen(onBack = { screen = Screen.Settings })
         Screen.Learn -> LearnScreen(onBack = { screen = Screen.Settings })
-        Screen.DataSource -> SourceScreen(
+        Screen.LineImport -> LineImportScreen(
             onBack = { screen = Screen.Settings },
             onOpenAmap = { screen = Screen.AmapImport },
+            onOpenLine = { screen = Screen.LineDetail(it) },
+        )
+        is Screen.LineDetail -> LineEditorScreen(
+            lineName = s.name,
+            onBack = { screen = Screen.LineImport },
+            onDeleted = { screen = Screen.LineImport },
         )
         Screen.AmapImport -> AmapImportScreen(
-            onBack = { screen = Screen.DataSource },
-            onDone = { screen = Screen.DataSource },
+            onBack = { screen = Screen.LineImport },
+            onDone = { screen = Screen.LineImport },
         )
         Screen.Edit -> TripEditor(
             trip = draft,

@@ -48,7 +48,7 @@ https://github.com/user-attachments/assets/ed941a36-0ca4-4f84-857b-b4fdbf0b71c9
 
 ## 接入你自己的数据
 
-最快的方式是运行时导入，不用编译：把线路写成 JSON，在 App 菜单「数据源」→「导入 JSON 文件」里选中即可；也可以填一个 `http/https` 地址点「从链接拉取」。线路数据支持工作日/周末分时段发车间隔（精确到秒）和双向始发站首末班。格式和字段见 [docs/DATA_SOURCE.md](docs/DATA_SOURCE.md)。
+最快的方式是运行时导入，不用编译：把线路写成 JSON，在 App「设置」→「线路导入」→「导入 JSON 文件」里选中即可，也可以用高德在线查询并生成。导入会与已有线路合并、同名覆盖，列表里还能修改运行参数或删除单条线路。线路数据支持工作日/周末分时段发车间隔（精确到秒）和双向始发站首末班。格式和字段见 [docs/DATA_SOURCE.md](docs/DATA_SOURCE.md)。
 
 也可以编进 App：
 
@@ -57,7 +57,7 @@ cp -r examples/json-source app/src/extra   # 复制模板
 # 编辑 app/src/extra/assets/transit.json，填你的线路和站点
 ```
 
-然后推送或本地编译即可。`app/src/extra` 存在时会自动编进 App，菜单「数据源」里能看到。详见 [examples/json-source](examples/json-source)。
+然后推送或本地编译即可。`app/src/extra` 存在时会自动编进 App，在「设置」→「线路导入」里能看到。详见 [examples/json-source](examples/json-source)。
 
 想接实时来车或别的数据，实现 `StaticSource` / `RealtimeSource` 两个接口，见 [docs/DATA_SOURCE.md](docs/DATA_SOURCE.md)。数据从哪里来、是否被允许使用，由使用者自己负责；本仓库不提供、不推荐任何具体数据源。
 

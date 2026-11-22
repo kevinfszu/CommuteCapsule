@@ -184,13 +184,13 @@ class AmapDataTest {
 
     @Test
     fun `merge appends and replaces same line name`() {
-        val merged = AmapData.merge(doc11(), AmapData.buildLines(raw13(), AmapData.parseHits(raw13()), emptySet(), "gz", 140, emptyMap()))
+        val merged = JsonTransit.merge(doc11(), AmapData.buildLines(raw13(), AmapData.parseHits(raw13()), emptySet(), "gz", 140, emptyMap()))
         var doc = JsonTransit.parse(merged)
         assertEquals(setOf("11号线", "13号线"), doc.lines.map { it.name }.toSet())
         assertEquals(4, doc.lines.size)
 
         // 再生成一次 13 号线：同名被替换，不重复
-        val again = AmapData.merge(merged, AmapData.buildLines(raw13(), AmapData.parseHits(raw13()), emptySet(), "gz", 140, emptyMap()))
+        val again = JsonTransit.merge(merged, AmapData.buildLines(raw13(), AmapData.parseHits(raw13()), emptySet(), "gz", 140, emptyMap()))
         doc = JsonTransit.parse(again)
         assertEquals(4, doc.lines.size)
         assertEquals(setOf("11号线", "13号线"), doc.lines.map { it.name }.toSet())

@@ -20,6 +20,9 @@ object ImportedJsonSource : StaticSource {
     val lineCount: Int get() = doc?.lineCount ?: 0
     val stationCount: Int get() = doc?.stationCount ?: 0
 
+    /** 全部方向记录，供线路导入列表和详情页读取 */
+    val lines: List<JsonTransit.Line> get() = doc?.lines.orEmpty()
+
     /** 已导入的线路名（正反方向合并为一条） */
     val lineNames: List<String> get() = doc?.lines?.map { it.name }?.distinct() ?: emptyList()
 
@@ -63,6 +66,40 @@ object ImportedJsonSource : StaticSource {
         }
         doc = parsed
         parsed
+    }
+
+    /** 合并导入：同名线路（两个方向）覆盖，其余保留 */
+    fun importMerged(ctx: Context, text: String): JsonTransit.Doc = synchronized(this) {
+        import(ctx, JsonTransit.merge(rawText(ctx), text))
+    }
+
+    /** 修改同名线路的单站用时与各方向始发站首末班 */
+    fun updateLine(
+        ctx: Context,
+        name: String,
+        hopSec: Int,
+        clocks: Map<String, Pair<Int, Int>>,
+    ): JsonTransit.Doc = synchronized(this) {
+        val text = rawText(ctx) ?: throw IllegalStateException("尚未导入线路")
+        import(ctx, JsonTransit.updateLineParams(text, name, hopSec, clocks))
+    }
+
+    /** 删除同名线路的全部方向记录；删完没有剩余线路时清空文件并返回 false */
+    fun deleteLine(ctx: Context, name: String): Boolean = synchronized(this) {
+        val text = rawText(ctx)
+        when {
+            text == null -> false
+            else -> {
+                val remaining = JsonTransit.deleteLine(text, name)
+                if (remaining == null) {
+                    clear(ctx)
+                    false
+                } else {
+                    import(ctx, remaining)
+                    true
+                }
+            }
+        }
     }
 
     fun clear(ctx: Context) = synchronized(this) {

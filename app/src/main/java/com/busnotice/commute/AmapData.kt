@@ -159,30 +159,6 @@ object AmapData {
             .toString(2)
     }
 
-    /** 合并：删除旧数据里同名线路（两个方向）后追加；旧数据不可解析时直接用新文档 */
-    fun merge(existing: String?, generated: String): String {
-        if (existing.isNullOrBlank()) return generated
-        val old = runCatching { JSONObject(existing) }.getOrNull() ?: return generated
-        val newRoot = JSONObject(generated)
-        val newLines = newRoot.optJSONArray("lines") ?: return generated
-        val names = (0 until newLines.length())
-            .mapNotNull { newLines.optJSONObject(it)?.optString("name") }
-            .toSet()
-        val oldLines = old.optJSONArray("lines") ?: return generated
-        val out = JSONArray()
-        for (i in 0 until oldLines.length()) {
-            val o = oldLines.optJSONObject(i) ?: continue
-            if (o.optString("name") !in names) out.put(o)
-        }
-        for (i in 0 until newLines.length()) out.put(newLines.optJSONObject(i))
-        val root = JSONObject()
-            .put("region", newRoot.optString("region", old.optString("region", "")))
-            .put("meta", newRoot.optJSONObject("meta") ?: JSONObject())
-            .put("lines", out)
-        val text = root.toString(2)
-        return if (runCatching { JsonTransit.parse(text) }.isSuccess) text else generated
-    }
-
     // ---------- 坐标 ----------
 
     private const val A = 6378245.0

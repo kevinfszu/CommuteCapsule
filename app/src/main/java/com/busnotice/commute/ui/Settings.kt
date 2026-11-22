@@ -37,7 +37,7 @@ import com.busnotice.commute.Places
 import com.busnotice.commute.TraceLog
 import com.busnotice.commute.Updater
 
-/** 设置：权限、数据源、更新、导出、演示，都从首页一次点击进来 */
+/** 设置：权限、线路导入、更新、导出、演示，都从首页一次点击进来 */
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
@@ -73,8 +73,8 @@ fun SettingsScreen(
         item {
             GlassCard(padding = 0.dp) {
                 GlassRow(
-                    headline = "数据源",
-                    supporting = "线路、站点与实时到站的来源",
+                    headline = "线路导入",
+                    supporting = "导入 JSON 或用高德生成，查看、修改、删除线路",
                     leading = { Icon(Icons.Default.Place, null, tint = dim, modifier = Modifier.size(20.dp)) },
                     onClick = onOpenSource,
                 )

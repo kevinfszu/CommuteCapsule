@@ -191,15 +191,41 @@ object Transit {
 
     private fun appContextOrNull(): Context? = if (::appContext.isInitialized) appContext else null
 
-    /** 导入 JSON 并立即切换为当前静态数据源；失败时抛异常，旧数据保持不变。 */
+    /** 导入 JSON（与已有线路合并、同名覆盖）并立即切换为当前静态数据源；失败时抛异常，旧数据保持不变。 */
     fun importJson(ctx: Context, text: String): ImportSummary = synchronized(this) {
-        val doc = ImportedJsonSource.import(ctx, text)
+        val doc = ImportedJsonSource.importMerged(ctx, text)
         static = ImportedJsonSource
         realtime = null
         clearColorCache()
         MetroRoutes.clear(ctx)
         if (region.isEmpty() && doc.region.isNotEmpty()) setRegion(ctx, doc.region)
         ImportSummary(doc.lineCount, doc.stationCount)
+    }
+
+    /** 修改已导入线路的单站用时和始发站首末班；失败抛异常。 */
+    fun updateImportedLine(
+        ctx: Context,
+        name: String,
+        hopSec: Int,
+        clocks: Map<String, Pair<Int, Int>>,
+    ): ImportSummary = synchronized(this) {
+        val doc = ImportedJsonSource.updateLine(ctx, name, hopSec, clocks)
+        static = ImportedJsonSource
+        clearColorCache()
+        MetroRoutes.clear(ctx)
+        ImportSummary(doc.lineCount, doc.stationCount)
+    }
+
+    /** 删除一条线路（两个方向）；删空后恢复扩展源/演示城市。 */
+    fun deleteImportedLine(ctx: Context, name: String) = synchronized(this) {
+        if (ImportedJsonSource.deleteLine(ctx, name)) {
+            static = ImportedJsonSource
+            clearColorCache()
+            MetroRoutes.clear(ctx)
+        } else {
+            clearImported(ctx)
+        }
+        Unit
     }
 
     /** 删除导入的数据，恢复 src/extra 扩展源；没有扩展则回到演示城市。 */

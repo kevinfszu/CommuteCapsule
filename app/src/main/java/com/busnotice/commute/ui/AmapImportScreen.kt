@@ -31,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.busnotice.commute.AmapClient
 import com.busnotice.commute.AmapData
-import com.busnotice.commute.ImportedJsonSource
 import com.busnotice.commute.Transit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -41,7 +40,7 @@ private val CLOCK = Regex("^(\\d{1,2})\\s*[:：]\\s*(\\d{2})$")
 
 private fun hm(min: Int): String = "%02d:%02d".format((min % 1440 + 1440) % 1440 / 60, min % 60)
 
-private fun parseClock(raw: String): Int? {
+internal fun parseClock(raw: String): Int? {
     val m = CLOCK.matchEntire(raw.trim()) ?: return null
     val h = m.groupValues[1].toIntOrNull() ?: return null
     val mm = m.groupValues[2].toIntOrNull() ?: return null
@@ -140,8 +139,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                     val gen = AmapData.buildLines(
                         text, listOfNotNull(h, rev), keepStops, Transit.region, total, clockMin,
                     )
-                    val merged = AmapData.merge(ImportedJsonSource.rawText(ctx), gen)
-                    Transit.importJson(ctx, merged)
+                    Transit.importJson(ctx, gen)
                 }
             }
             generating = false

@@ -1,5 +1,6 @@
 package com.busnotice.commute
 
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -131,6 +132,77 @@ object JsonTransit {
             note = meta?.optString("note", "").orEmpty(),
             lines = lines,
         )
+    }
+
+    /** 合并：incoming 里出现的同名线路，先从 existing 移除，再追加 incoming；existing 为空/不可解析直接返回 incoming */
+    fun merge(existing: String?, incoming: String): String {
+        if (existing.isNullOrBlank()) return incoming
+        val old = runCatching { JSONObject(existing) }.getOrNull() ?: return incoming
+        val newRoot = JSONObject(incoming)
+        val newLines = newRoot.optJSONArray("lines") ?: return incoming
+        val names = (0 until newLines.length())
+            .mapNotNull { newLines.optJSONObject(it)?.optString("name") }
+            .toSet()
+        val oldLines = old.optJSONArray("lines") ?: return incoming
+        val out = JSONArray()
+        for (i in 0 until oldLines.length()) {
+            val o = oldLines.optJSONObject(i) ?: continue
+            if (o.optString("name") !in names) out.put(o)
+        }
+        for (i in 0 until newLines.length()) out.put(newLines.optJSONObject(i))
+        val root = JSONObject()
+            .put("region", newRoot.optString("region", old.optString("region", "")))
+            .put("meta", newRoot.optJSONObject("meta") ?: JSONObject())
+            .put("lines", out)
+        val text = root.toString(2)
+        return if (runCatching { parse(text) }.isSuccess) text else incoming
+    }
+
+    /** 删除指定显示名的全部方向记录；删完没有线路返回 null；结果必须能通过 parse 校验 */
+    fun deleteLine(text: String, name: String): String? {
+        val root = runCatching { JSONObject(text) }
+            .getOrElse { throw IllegalArgumentException("JSON 格式无效：${it.message ?: "解析失败"}") }
+        val oldLines = root.optJSONArray("lines") ?: throw IllegalArgumentException("缺少 lines 数组字段")
+        val out = JSONArray()
+        for (i in 0 until oldLines.length()) {
+            val o = oldLines.optJSONObject(i) ?: continue
+            if (o.optString("name") != name) out.put(o)
+        }
+        if (out.length() == 0) return null
+        root.put("lines", out)
+        val updated = root.toString(2)
+        parse(updated)
+        return updated
+    }
+
+    /** 修改同名全部方向记录的 hopSec；并按方向 id 覆盖始发站 first/last；返回新 JSON 文本 */
+    fun updateLineParams(
+        text: String,
+        name: String,
+        hopSec: Int,
+        clocks: Map<String, Pair<Int, Int>>,
+    ): String {
+        val root = runCatching { JSONObject(text) }
+            .getOrElse { throw IllegalArgumentException("JSON 格式无效：${it.message ?: "解析失败"}") }
+        val arr = root.optJSONArray("lines") ?: throw IllegalArgumentException("缺少 lines 数组字段")
+        val hop = hopSec.coerceIn(20, 900)
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            if (o.optString("name") != name) continue
+            o.put("hopSec", hop)
+            clocks[o.optString("id")]?.let { (first, last) ->
+                o.put("first", minToClock(first))
+                o.put("last", minToClock(last))
+            }
+        }
+        val updated = root.toString(2)
+        parse(updated)
+        return updated
+    }
+
+    private fun minToClock(min: Int): String {
+        val m = ((min % 1440) + 1440) % 1440
+        return "%02d:%02d".format(m / 60, m % 60)
     }
 
     /** 全部线路按名称归并双向；环线带上方向名，供浏览界面直接展示 */

@@ -239,4 +239,55 @@ class JsonTransitTest {
         assertEquals(360 + 2 * 2, east.firstMin)
         assertEquals(1380 + 2 * 2, east.lastMin)
     }
+
+    @Test
+    fun `merge replaces same-name lines and keeps others`() {
+        val incoming = """{ "region": "gz", "lines": [
+            { "id": "l13e2", "name": "13号线", "subway": true,
+              "stops": [ { "name": "A", "lat": 23.0, "lng": 113.0 }, { "name": "B", "lat": 23.1, "lng": 113.1 } ] }
+        ] }"""
+        val doc = JsonTransit.parse(JsonTransit.merge(sample, incoming))
+        assertEquals("gz", doc.region)
+        assertEquals(setOf("l13e2", "l11i", "l11o"), doc.lines.map { it.id }.toSet())
+        // 旧的两个方向都移除，只保留新的一条记录
+        assertEquals(1, doc.lines.count { it.name == "13号线" })
+        assertEquals(2, doc.lines.count { it.name == "11号线" })
+
+        assertEquals(incoming, JsonTransit.merge(null, incoming))
+        assertEquals(incoming, JsonTransit.merge("{ 不是 JSON", incoming))
+    }
+
+    @Test
+    fun `deleteLine removes all directions and returns null when empty`() {
+        val remaining = JsonTransit.deleteLine(sample, "13号线")
+        assertNotNull(remaining)
+        val doc = JsonTransit.parse(remaining!!)
+        assertEquals(listOf("l11i", "l11o"), doc.lines.map { it.id })
+
+        val single = """{ "lines": [ { "id": "b1", "name": "1路",
+            "stops": [ { "name": "甲", "lat": 23.0, "lng": 113.0 }, { "name": "乙", "lat": 23.1, "lng": 113.1 } ] } ] }"""
+        assertNull(JsonTransit.deleteLine(single, "1路"))
+    }
+
+    @Test
+    fun `updateLineParams changes hop and direction clocks only`() {
+        val rich = """{ "region": "gz", "meta": { "source": "测试" }, "lines": [
+            { "id": "r1", "name": "R", "subway": true, "reverseId": "r2", "color": "F9BE58",
+              "first": "06:00", "last": "23:00", "hopSec": 140,
+              "service": { "weekday": [ { "from": "06:00", "to": "09:00", "headwaySec": 360 } ] },
+              "stops": [ { "name": "A", "lat": 23.0, "lng": 113.0 }, { "name": "B", "lat": 23.1, "lng": 113.1 } ] }
+        ] }"""
+        val line = JsonTransit.parse(
+            JsonTransit.updateLineParams(rich, "R", 300, mapOf("r1" to (400 to 1400))),
+        ).lines.single()
+        assertEquals(300, line.hopSec)
+        assertEquals(400, line.firstMin)
+        assertEquals(1400, line.lastMin)
+        assertEquals("r2", line.reverseId)
+        assertEquals("F9BE58", line.color)
+        assertEquals(360, line.weekdayBands.single().headwaySec)
+
+        assertEquals(900, JsonTransit.parse(JsonTransit.updateLineParams(rich, "R", 5000, emptyMap())).lines.single().hopSec)
+        assertEquals(20, JsonTransit.parse(JsonTransit.updateLineParams(rich, "R", 0, emptyMap())).lines.single().hopSec)
+    }
 }
