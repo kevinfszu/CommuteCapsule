@@ -1,15 +1,28 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.busnotice.commute.ui
 
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,6 +32,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,6 +60,8 @@ fun LineImportScreen(
     var importing by remember { mutableStateOf(false) }
     var lastImport by remember { mutableStateOf<String?>(null) }
     var confirmClear by remember { mutableStateOf(false) }
+    var addMenu by remember { mutableStateOf(false) }
+    var moreMenu by remember { mutableStateOf(false) }
     val sourceTitle = remember(version) { Transit.static.title }
     val hasImport = remember(version) { ImportedJsonSource.hasData }
     val groups = remember(version) { ImportedJsonSource.lines.groupBy { it.name } }
@@ -77,7 +94,76 @@ fun LineImportScreen(
         }
     }
 
-    GlassPage(title = "线路导入", onBack = onBack) {
+    GlassPage(
+        title = "线路导入",
+        onBack = onBack,
+        actions = {
+            // ＋ 新增：两种导入方式收进菜单
+            Box {
+                RoundButton(
+                    onClick = { addMenu = true }, dark = dark,
+                    modifier = Modifier.semantics { contentDescription = "新增线路" },
+                ) { Text("+", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ink) }
+                DropdownMenu(
+                    expanded = addMenu, onDismissRequest = { addMenu = false },
+                    shape = MenuShape, containerColor = Fuse.surface(dark),
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("导入 JSON 文件") },
+                        leadingIcon = { Icon(Icons.Default.Add, null, Modifier.size(18.dp), tint = dim) },
+                        enabled = !importing,
+                        onClick = {
+                            addMenu = false
+                            picker.launch(arrayOf("*/*"))
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("用高德查询并生成") },
+                        leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(18.dp), tint = dim) },
+                        enabled = !importing,
+                        onClick = {
+                            addMenu = false
+                            onOpenAmap()
+                        },
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            // ⋯ 更多：清空全部线路
+            Box {
+                RoundButton(
+                    onClick = { moreMenu = true }, dark = dark,
+                    modifier = Modifier.semantics { contentDescription = "更多" },
+                ) { Text("⋯", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = dim) }
+                DropdownMenu(
+                    expanded = moreMenu, onDismissRequest = { moreMenu = false },
+                    shape = MenuShape, containerColor = Fuse.surface(dark),
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("清空全部线路", color = if (hasImport) Fuse.MetroRed else dim) },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Delete, null, Modifier.size(18.dp),
+                                tint = if (hasImport) Fuse.MetroRed else dim,
+                            )
+                        },
+                        enabled = hasImport,
+                        onClick = {
+                            moreMenu = false
+                            confirmClear = true
+                        },
+                    )
+                }
+            }
+        },
+    ) {
+        if (importing) {
+            item {
+                GlassCard {
+                    Text("正在导入 JSON…", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Fuse.accent(dark))
+                }
+            }
+        }
         lastImport?.let { msg ->
             item {
                 GlassCard {
@@ -96,6 +182,11 @@ fun LineImportScreen(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
+                Text(
+                    "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",
+                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
         }
         item {
@@ -104,7 +195,7 @@ fun LineImportScreen(
                     SectionLabel("已导入的线路（${groups.size} 条）")
                     if (!hasImport) {
                         Text(
-                            "还没有导入线路。当前使用内置演示数据，用下面的方式添加。",
+                            "还没有导入线路。点右上角 ＋ 导入 JSON 或用高德生成。当前使用内置演示数据。",
                             fontSize = 13.sp, color = dim, modifier = Modifier.padding(top = 8.dp),
                         )
                     }
@@ -125,64 +216,26 @@ fun LineImportScreen(
                 }
             }
         }
-        item {
-            GlassCard {
-                SectionLabel("新增线路")
-                Column(
-                    Modifier.fillMaxWidth().padding(top = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    PillButton(
-                        onClick = { picker.launch(arrayOf("*/*")) },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !importing,
-                        secondary = true,
-                    ) { Text(if (importing) "导入中…" else "导入 JSON 文件") }
-                    PillButton(
-                        onClick = onOpenAmap,
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !importing,
-                        secondary = true,
-                    ) { Text("用高德查询并生成") }
-                }
-            }
-        }
-        if (hasImport) {
-            item {
-                GlassCard {
-                    SectionLabel("危险操作")
-                    if (!confirmClear) {
-                        DialogButton(
-                            "清空全部线路", danger = true,
-                            onClick = { confirmClear = true },
-                        )
-                    } else {
-                        Text(
-                            "清空后所有已导入线路都会移除，并恢复内置演示数据。",
-                            fontSize = 12.sp, lineHeight = 17.sp, color = dim,
-                            modifier = Modifier.padding(top = 6.dp),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            DialogButton("取消", onClick = { confirmClear = false })
-                            DialogButton("确认清空", danger = true, onClick = {
-                                Transit.clearImported(ctx)
-                                version++
-                                Toast.makeText(ctx, "已清空线路，恢复默认数据源", Toast.LENGTH_SHORT).show()
-                                lastImport = null
-                                confirmClear = false
-                            })
-                        }
-                    }
-                }
-            }
-        }
-        item {
-            Text(
-                "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",
-                fontSize = 12.sp, lineHeight = 17.sp, color = dim,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            shape = DialogShape, containerColor = Fuse.surface(dark),
+            titleContentColor = ink, textContentColor = ink,
+            title = { Text("清空全部线路？") },
+            text = { Text("清空后所有已导入线路都会移除，并恢复内置演示数据。") },
+            confirmButton = {
+                DialogButton("清空", danger = true, onClick = {
+                    Transit.clearImported(ctx)
+                    version++
+                    lastImport = null
+                    confirmClear = false
+                    Toast.makeText(ctx, "已清空线路，恢复默认数据源", Toast.LENGTH_SHORT).show()
+                })
+            },
+            dismissButton = { DialogButton("取消", onClick = { confirmClear = false }) },
+        )
     }
 }
 
