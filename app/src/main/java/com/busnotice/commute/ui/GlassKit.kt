@@ -335,17 +335,18 @@ fun glassFieldColors(dark: Boolean): TextFieldColors {
     )
 }
 
-/** 对话框里的文字按钮：确认用主色（浅色深、深色黄），其它用正文色 */
+/** 对话框里的文字按钮：确认用主色（浅色深、深色黄），其它用正文色；onDark = 弹窗底板固定为深色 */
 @Composable
 fun DialogButton(
     text: String, onClick: () -> Unit, enabled: Boolean = true,
-    primary: Boolean = false, danger: Boolean = false,
+    primary: Boolean = false, danger: Boolean = false, onDark: Boolean = false,
 ) {
     val dark = isSystemInDarkTheme()
+    val onDarkSurface = dark || onDark
     val c = when {
         danger -> Fuse.MetroRed
-        primary -> if (dark) Fuse.Yellow else Fuse.Night
-        else -> Fuse.dim(dark)
+        primary -> if (onDarkSurface) Fuse.Yellow else Fuse.Night
+        else -> if (onDark) Color.White.copy(alpha = 0.75f) else Fuse.dim(dark)
     }
     TextButton(onClick = onClick, enabled = enabled, shape = CircleShape) {
         Text(text, color = if (enabled) c else c.copy(alpha = 0.4f), fontWeight = if (primary || danger) FontWeight.Bold else FontWeight.Normal)

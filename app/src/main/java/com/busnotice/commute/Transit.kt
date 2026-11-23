@@ -202,14 +202,15 @@ object Transit {
         ImportSummary(doc.lineCount, doc.stationCount)
     }
 
-    /** 修改已导入线路的单站用时和始发站首末班；失败抛异常。 */
+    /** 修改已导入线路的单站用时、始发站首末班和分时段发车间隔；失败抛异常。 */
     fun updateImportedLine(
         ctx: Context,
         name: String,
         hopSec: Int,
         clocks: Map<String, Pair<Int, Int>>,
+        service: Pair<List<HeadwayBand>, List<HeadwayBand>>? = null,
     ): ImportSummary = synchronized(this) {
-        val doc = ImportedJsonSource.updateLine(ctx, name, hopSec, clocks)
+        val doc = ImportedJsonSource.updateLine(ctx, name, hopSec, clocks, service)
         static = ImportedJsonSource
         clearColorCache()
         MetroRoutes.clear(ctx)

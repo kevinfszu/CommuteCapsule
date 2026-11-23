@@ -15,6 +15,8 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.busnotice.commute.AmapClient
 import com.busnotice.commute.AmapData
+import com.busnotice.commute.HeadwayBand
 import com.busnotice.commute.Transit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -76,6 +79,9 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
     var hopMin by remember { mutableStateOf("2") }
     var hopSec by remember { mutableStateOf("20") }
     var clocks by remember { mutableStateOf<Map<String, Pair<String, String>>>(emptyMap()) }
+    var weekdayBands by remember { mutableStateOf<List<HeadwayBand>>(emptyList()) }
+    var weekendBands by remember { mutableStateOf<List<HeadwayBand>>(emptyList()) }
+    var weekendSame by remember { mutableStateOf(true) }
 
     val sel = hits.firstOrNull { it.amapId == selectedId }
     val rev = sel?.let { AmapData.reverseOf(it, hits) }
@@ -95,6 +101,16 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
         clocks = listOfNotNull(h, AmapData.reverseOf(h, hits)).associate { d ->
             d.amapId to (hm(d.firstMin) to hm(d.lastMin))
         }
+        // 优先用选中方向的分时段表，选中方向没有就用反方向的
+        val base = if (h.weekdayBands.isEmpty() && h.weekendBands.isEmpty()) {
+            AmapData.reverseOf(h, hits)
+        } else {
+            h
+        }
+        weekdayBands = base?.weekdayBands.orEmpty()
+        val we = base?.weekendBands.orEmpty()
+        weekendSame = we.isEmpty()
+        weekendBands = if (weekendSame) weekdayBands else we
         error = null
     }
 
@@ -108,6 +124,9 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                 raw = text
                 selectedId = null
                 keepStops = emptySet()
+                weekdayBands = emptyList()
+                weekendBands = emptyList()
+                weekendSame = true
                 runCatching { AmapData.parseHits(text) }
                     .onSuccess {
                         hits = it
@@ -131,13 +150,24 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
             clockMin[id] = from to to
         }
         if (keepStops.size < 2) { fail("至少保留 2 个站点"); return }
+        val (wdParsed, wdError) = checkBands(weekdayBands)
+        if (wdError != null) { fail("工作日发车间隔：$wdError"); return }
+        val wd = wdParsed.orEmpty()
+        val (weParsed, weError) = if (weekendSame) {
+            emptyList<HeadwayBand>() to null
+        } else {
+            checkBands(weekendBands)
+        }
+        if (weError != null) { fail("周末发车间隔：$weError"); return }
+        val we = weParsed.orEmpty()
         val text = raw ?: run { fail("请先查询线路"); return }
         generating = true
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
+                    val service = if (wd.isEmpty() && we.isEmpty()) null else AmapData.ServiceBands(wd, we)
                     val gen = AmapData.buildLines(
-                        text, listOfNotNull(h, rev), keepStops, Transit.region, total, clockMin,
+                        text, listOfNotNull(h, rev), keepStops, Transit.region, total, clockMin, service,
                     )
                     Transit.importJson(ctx, gen)
                 }
@@ -313,6 +343,57 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                         )
                     }
                     Text("影响站点首末班与到站推算，20–900 秒", fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 4.dp))
+
+                    SectionLabel("发车间隔", Modifier.padding(top = 12.dp))
+                    Text(
+                        if (weekdayBands.isEmpty()) {
+                            "高德没有返回分时段间隔，可手动添加；不添加则按行程里的默认高峰/平峰推算。"
+                        } else {
+                            "来自高德 timedesc，可修改各段起止时间与间隔。"
+                        },
+                        fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    Text("工作日", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ink,
+                        modifier = Modifier.padding(top = 8.dp))
+                    HeadwayBandsEditor(
+                        bands = weekdayBands,
+                        onChange = { weekdayBands = it },
+                        enabled = !generating,
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text("周末与工作日相同", fontSize = 14.sp, color = ink, modifier = Modifier.weight(1f))
+                        Switch(
+                            checked = weekendSame,
+                            onCheckedChange = { on ->
+                                if (on) {
+                                    weekendSame = true
+                                } else {
+                                    if (weekendBands.isEmpty()) weekendBands = weekdayBands
+                                    weekendSame = false
+                                }
+                            },
+                            enabled = !generating,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Fuse.onAccent(dark),
+                                checkedTrackColor = Fuse.accent(dark),
+                                uncheckedThumbColor = dim,
+                                uncheckedTrackColor = ink.copy(alpha = 0.12f),
+                            ),
+                        )
+                    }
+                    if (!weekendSame) {
+                        Text("周末", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ink,
+                            modifier = Modifier.padding(top = 8.dp))
+                        HeadwayBandsEditor(
+                            bands = weekendBands,
+                            onChange = { weekendBands = it },
+                            enabled = !generating,
+                        )
+                    }
 
                     SectionLabel("始发站首末班", Modifier.padding(top = 12.dp))
                     listOfNotNull(sel, rev).forEach { d ->

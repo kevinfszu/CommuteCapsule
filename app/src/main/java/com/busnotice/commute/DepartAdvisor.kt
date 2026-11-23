@@ -270,7 +270,7 @@ object DepartAdvisor {
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setOnlyAlertOnce(!loud).setSilent(!loud)
             .setContentIntent(open)
-            .addAction(0, "今日不再提醒", mute)
+            .addAction(0, "点击通知 今日不再提醒", mute)
             .setTimeoutAfter(maxOf(a.busAt - now, 0L) + 3 * 60_000L)
         if (a.leaveAt > now) b.setWhen(a.leaveAt).setShowWhen(true).setUsesChronometer(true).setChronometerCountDown(true)
         else b.setShowWhen(false)

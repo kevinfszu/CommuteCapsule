@@ -59,8 +59,10 @@ import kotlin.math.abs
 private val ItemH = 48.dp
 private const val VISIBLE = 5           // 可见 5 行，选中的在正中
 private const val PAD = VISIBLE / 2     // 上下各垫 2 个空行，第一项和最后一项也能滚到正中
+// 循环滚轮绕多少圈：起点放正中，够用户一直滚，又不至于让 LazyColumn 的像素总量溢出 Int
+private const val LOOP = 100
 
-/** 单个滚轮：value 是选中的下标（0 until count），滚停时回调 onValue */
+/** 单个滚轮：value 是选中的下标（0 until count），滚停时回调 onValue；wrap = 首尾相接循环（分 59 的下一格是 00） */
 @Composable
 fun WheelColumn(
     count: Int,
@@ -69,20 +71,26 @@ fun WheelColumn(
     label: (Int) -> String,
     modifier: Modifier = Modifier,
     width: Dp = 84.dp,
+    wrap: Boolean = false,
 ) {
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
-    val state = rememberLazyListState(initialFirstVisibleItemIndex = value.coerceIn(0, count - 1))
+    val pad = PAD
+    // 循环模式把起点放到正中那一圈，向前向后都够滚
+    val base = if (wrap) count * (LOOP / 2) else 0
+    val state = rememberLazyListState(
+        initialFirstVisibleItemIndex = base + value.coerceIn(0, count - 1),
+    )
     val fling = rememberSnapFlingBehavior(lazyListState = state, snapPosition = SnapPosition.Start)
     val haptic = LocalHapticFeedback.current
     val onValueNow by rememberUpdatedState(onValue)
     val scope = rememberCoroutineScope()
     val itemPx = with(LocalDensity.current) { ItemH.toPx() }
-    // 顶行下标 = 选中项下标（前面垫了 PAD 个空行）
+    // 顶行下标 = 选中项下标（非循环模式前面垫了 PAD 个空行）
     val selected by remember(state) {
         derivedStateOf {
             val i = state.firstVisibleItemIndex + if (state.firstVisibleItemScrollOffset > itemPx / 2) 1 else 0
-            i.coerceIn(0, count - 1)
+            if (wrap) Math.floorMod(i, count) else i.coerceIn(0, count - 1)
         }
     }
     LaunchedEffect(state) {
@@ -107,25 +115,36 @@ fun WheelColumn(
                 )
             },
     ) {
-        items(count + PAD * 2) { k ->
-            val idx = k - PAD
+        items(if (wrap) count * LOOP + pad * 2 else count + pad * 2) { k ->
+            val idx = if (wrap) Math.floorMod(k - pad, count) else k - pad
+            val shown = wrap || idx in 0 until count
             Box(
                 Modifier.fillMaxWidth().height(ItemH)
                     .graphicsLayer {
                         // 离中心越远越淡、越小
-                        val center = state.firstVisibleItemIndex + state.firstVisibleItemScrollOffset / itemPx + PAD
+                        val center = state.firstVisibleItemIndex + state.firstVisibleItemScrollOffset / itemPx + pad
                         val d = abs(k - center).coerceAtMost(3f)
                         alpha = (1f - 0.28f * d).coerceAtLeast(0.15f)
                         scaleX = 1f - 0.07f * d; scaleY = scaleX
                     }
                     .let {
-                        if (idx in 0 until count) it.clickable(
+                        if (shown) it.clickable(
                             interactionSource = remember { MutableInteractionSource() }, indication = null,
-                        ) { scope.launch { state.animateScrollToItem(idx) } } else it
+                        ) {
+                            scope.launch {
+                                // 循环模式点哪一格都走最近的方向，不会为了到 00 从 59 一路往上滚
+                                val target = if (!wrap) idx else {
+                                    val cur = Math.floorMod(state.firstVisibleItemIndex, count)
+                                    val delta = Math.floorMod(idx - cur + count / 2, count) - count / 2
+                                    state.firstVisibleItemIndex + delta
+                                }
+                                state.animateScrollToItem(target)
+                            }
+                        } else it
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                if (idx in 0 until count) {
+                if (shown) {
                     Text(label(idx), fontSize = 34.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle)
                 }
             }
@@ -150,7 +169,7 @@ fun TimeWheel(minute: Int, onMinute: (Int) -> Unit, modifier: Modifier = Modifie
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
             WheelColumn(24, h, { h = it; onMinute(h * 60 + m) }, { "%02d".format(it) })
             Text(":", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark), modifier = Modifier.padding(horizontal = 6.dp))
-            WheelColumn(60, m, { m = it; onMinute(h * 60 + m) }, { "%02d".format(it) })
+            WheelColumn(60, m, { m = it; onMinute(h * 60 + m) }, { "%02d".format(it) }, wrap = true)
         }
     }
 }

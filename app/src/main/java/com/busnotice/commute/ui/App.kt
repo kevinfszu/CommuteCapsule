@@ -30,6 +30,8 @@ sealed interface Screen {
 @Composable
 fun App(resumeTick: Int) {
     var screen by remember { mutableStateOf<Screen>(Screen.Home) }
+    // 行程记录可从设置或算法学习进入，返回时回到来路
+    var recordsFrom by remember { mutableStateOf<Screen>(Screen.Settings) }
     var draft by remember { mutableStateOf(Trip(chinaWorkday = true)) }
     var dirty by remember { mutableStateOf(false) }
     val editState = rememberLazyListState()
@@ -55,7 +57,8 @@ fun App(resumeTick: Int) {
     fun goBack() {
         screen = when (screen) {
             Screen.Settings -> Screen.Home
-            Screen.Records, Screen.Learn, Screen.LineImport -> Screen.Settings
+            Screen.Records -> recordsFrom
+            Screen.Learn, Screen.LineImport -> Screen.Settings
             Screen.AmapImport -> Screen.LineImport
             is Screen.LineDetail -> Screen.LineImport
             else -> Screen.Home
@@ -77,12 +80,15 @@ fun App(resumeTick: Int) {
         )
         Screen.Settings -> SettingsScreen(
             onBack = { screen = Screen.Home },
-            onOpenRecords = { screen = Screen.Records },
+            onOpenRecords = { recordsFrom = Screen.Settings; screen = Screen.Records },
             onOpenLearn = { screen = Screen.Learn },
             onOpenSource = { screen = Screen.LineImport },
         )
-        Screen.Records -> RecordsScreen(onBack = { screen = Screen.Settings })
-        Screen.Learn -> LearnScreen(onBack = { screen = Screen.Settings })
+        Screen.Records -> RecordsScreen(onBack = { screen = recordsFrom })
+        Screen.Learn -> LearnScreen(
+            onBack = { screen = Screen.Settings },
+            onOpenRecords = { recordsFrom = Screen.Learn; screen = Screen.Records },
+        )
         Screen.LineImport -> LineImportScreen(
             onBack = { screen = Screen.Settings },
             onOpenAmap = { screen = Screen.AmapImport },

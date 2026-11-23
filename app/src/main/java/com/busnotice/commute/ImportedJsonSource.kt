@@ -73,15 +73,16 @@ object ImportedJsonSource : StaticSource {
         import(ctx, JsonTransit.merge(rawText(ctx), text))
     }
 
-    /** 修改同名线路的单站用时与各方向始发站首末班 */
+    /** 修改同名线路的单站用时、各方向始发站首末班和分时段发车间隔 */
     fun updateLine(
         ctx: Context,
         name: String,
         hopSec: Int,
         clocks: Map<String, Pair<Int, Int>>,
+        service: Pair<List<HeadwayBand>, List<HeadwayBand>>? = null,
     ): JsonTransit.Doc = synchronized(this) {
         val text = rawText(ctx) ?: throw IllegalStateException("尚未导入线路")
-        import(ctx, JsonTransit.updateLineParams(text, name, hopSec, clocks))
+        import(ctx, JsonTransit.updateLineParams(text, name, hopSec, clocks, service))
     }
 
     /** 删除同名线路的全部方向记录；删完没有剩余线路时清空文件并返回 false */

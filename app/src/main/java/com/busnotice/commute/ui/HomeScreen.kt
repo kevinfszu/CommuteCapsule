@@ -47,7 +47,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
@@ -174,7 +173,17 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
         placeText = runCatching {
             if (l != null) Places.passive(ctx, l.latitude, l.longitude, l.accuracy, l.time)
             val label = l?.let { Places.text(Places.classify(ctx, it.latitude, it.longitude, it.accuracy)) }
-            label ?: if (!Places.bothConfirmed(ctx)) "正在学习常去地点（家 ${Places.progressOf(ctx, Places.Kind.HOME)}/3 · 公司 ${Places.progressOf(ctx, Places.Kind.WORK)}/3）" else null
+            label ?: run {
+                val home = Places.progressOf(ctx, Places.Kind.HOME)
+                val work = Places.progressOf(ctx, Places.Kind.WORK)
+                val need = (3 - home).coerceAtLeast(0) + (3 - work).coerceAtLeast(0)
+                when {
+                    need == 0 -> null
+                    home >= 3 -> "正在记住你的公司（还差 $need 次）"
+                    work >= 3 -> "正在记住你的家（还差 $need 次）"
+                    else -> "正在记住你的家和公司（还差 $need 次）"
+                }
+            }
         }.getOrNull()
     }
 
@@ -240,9 +249,6 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                     item(key = "demo") { LiveBoard(demoBoard, com.busnotice.commute.DemoPlayer.trip, dark) }
                 }
                 val board = if (demoBoard != null) null else live
-                if (!demoOn && board == null && pendingTrip == null && advice != null) {
-                    item(key = "depart") { DepartBoard(advice!!, nowTick, dark) }
-                }
                 if (demoOn) Unit
                 else if (board != null && pendingTrip == null) {
                     item(key = "live") {
@@ -255,7 +261,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                     item(key = "live") { RestoringBoard(name, dark) }
                 }
                 if (!demoOn && board == null && pendingTrip == null) {
-                    lastRun?.let { (t, ns) -> item(key = "last-run") { RecentRunCard(t, ns, dark) } }
+                    lastRun?.let { (t, ns) -> item(key = "last-run") { RecentRunCard(t, ns, dark, snack) } }
                 }
                 // 缺必需设置时放上面显眼处，全齐了就放到列表最后
                 val permUrgent = perms.any { !it.granted && !it.optional }
@@ -317,6 +323,10 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                             scope.launch { snack.showSnackbar("时间范围已调整为 ${hhmm(sg.start)}–${hhmm(sg.end)}") }
                         },
                     )
+                }
+                // 出发建议是辅助信息，放在行程列表之后，不占主位
+                if (!demoOn && board == null && pendingTrip == null && advice != null) {
+                    item(key = "depart") { DepartBoard(advice!!, nowTick, dark) }
                 }
             }
         }
@@ -456,7 +466,10 @@ private fun TripCard(
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
                 Text(trip.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.alpha(fade))
-                Text("${trip.daysText()} · 至 ${hhmm(trip.endMinute)}", fontSize = 13.sp, color = dimColor,
+                val timeText =
+                    if (trip.startMinute == trip.endMinute) "${hhmm(trip.startMinute)} 出发"
+                    else "${hhmm(trip.startMinute)} 出发，最晚 ${hhmm(trip.endMinute)}"
+                Text("${trip.daysText()} · $timeText", fontSize = 13.sp, color = dimColor,
                     modifier = Modifier.padding(top = 3.dp))
             }
             Column(horizontalAlignment = Alignment.End) {
@@ -526,11 +539,6 @@ private fun TripCard(
                         text = { Text("生成回程") },
                         leadingIcon = { Icon(Icons.Default.ArrowForward, null, modifier = Modifier.size(18.dp), tint = dimColor) },
                         onClick = { more = false; onReverse() },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("编辑") },
-                        leadingIcon = { Icon(Icons.Default.Edit, null, modifier = Modifier.size(18.dp), tint = dimColor) },
-                        onClick = { more = false; onEdit() },
                     )
                     DropdownMenuItem(
                         text = { Text("删除", color = Fuse.MetroRed) },

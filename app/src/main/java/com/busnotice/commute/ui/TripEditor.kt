@@ -557,7 +557,7 @@ private fun LegCard(
                 Learn.Ride.Source.LEARNED ->
                     "已按实测中位数 ${ride.minutes} 分钟（共 ${Learn.rideSamples(ctx, tripId, index)} 次）推算；修改需清空实测记录"
                 Learn.Ride.Source.MANUAL -> "按你填写的 ${ride.minutes} 分钟推算"
-                Learn.Ride.Source.ESTIMATE -> "按站数估算 ${ride.minutes} 分钟；坐满 3 次后改用实测"
+                Learn.Ride.Source.ESTIMATE -> "按站数估算 ${ride.minutes} 分钟；有 1 次实测后改用实测"
                 Learn.Ride.Source.DEFAULT ->
                     if (metro != null) "默认 ${ride.minutes} 分钟（选好下车站后可估算）" else "默认 ${ride.minutes} 分钟"
             }

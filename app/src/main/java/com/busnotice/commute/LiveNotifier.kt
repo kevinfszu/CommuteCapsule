@@ -95,7 +95,7 @@ object LiveNotifier {
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setContentIntent(openApp(ctx))
-            .addAction(0, "停止记录", actionIntent(ctx, ActionReceiver.ACTION_STOP))
+            .addAction(0, "点击通知 停止记录", actionIntent(ctx, ActionReceiver.ACTION_STOP))
             .build()
 
     /** 直接替换前台通知（不管胶囊是否被划掉隐藏） */
@@ -162,11 +162,17 @@ object LiveNotifier {
         }
     }
 
-    /** 需要马上出发 / 换乘紧张时，额外弹一条横幅并震动 */
-    fun alert(ctx: Context, title: String, text: String, metro: Boolean = false, id: Int = ALERT_ID, ack: Boolean = false) {
+    /**
+     * 需要马上出发 / 换乘紧张时，额外弹一条横幅并震动。
+     * quiet = true：只刷新一条不响不震的「留底」通知（用户已点「我知道了」）。
+     */
+    fun alert(
+        ctx: Context, title: String, text: String, metro: Boolean = false,
+        id: Int = ALERT_ID, ack: Boolean = false, quiet: Boolean = false,
+    ) {
         unhide(ctx)
-        val popped = pop(ctx, title, text)
-        TraceLog.event("alert", "title" to title, "text" to text, "pop" to popped)
+        val popped = if (quiet) false else pop(ctx, title, text)
+        TraceLog.event("alert", "title" to title, "text" to text, "pop" to popped, "quiet" to quiet)
         val b = NotificationCompat.Builder(ctx, CHANNEL_ALERT)
             .setSmallIcon(if (metro) R.drawable.ic_metro else R.drawable.ic_bus)
             .setColor(if (metro) GREEN else BLUE)
@@ -178,14 +184,22 @@ object LiveNotifier {
             .setTimeoutAfter(2 * 60_000L)
             .setContentIntent(openApp(ctx))
             // 已经用流体云卡片提醒过了：通知栏这条只留底，不再响/震第二次
-            .setSilent(popped)
-        if (ack) b.addAction(0, "我已下车", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_ACK))
+            .setSilent(popped || quiet)
+        if (ack) {
+            // 动宾 + 作用：通知栏脱离行程上下文，按钮必须说清点了会发生什么
+            b.addAction(0, "点击通知 停止本次下车提醒", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_KNOW))
+            b.addAction(0, "点击通知 确认下车", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_ACK))
+        }
         val n = b.build()
         try {
             NotificationManagerCompat.from(ctx).notify(id, n)
         } catch (_: SecurityException) { }
-        buzz(ctx)
+        if (!quiet) buzz(ctx)
     }
+
+    /** 点了「我知道了」：刷新一条同样带两个按钮、但不响不震的通知 */
+    fun alightQuiet(ctx: Context, title: String, text: String, metro: Boolean = false, id: Int = ALIGHT_ID) =
+        alert(ctx, title, text, metro = metro, id = id, ack = true, quiet = true)
 
     /**
      * 把流体云胶囊本身重发成「会提醒」的样子（高重要级渠道、不静音、不只提醒一次）：
@@ -281,14 +295,14 @@ object LiveNotifier {
             .setRequestPromotedOngoing(true)
             .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
             .setContentIntent(openApp(ctx))
-            // 划走不等于结束：先隐藏，下次提醒再出来；要结束请点「结束/关闭」
+            // 划走不等于结束：先隐藏，下次提醒再出来；要结束请点「结束本次行程/提醒」
             .setDeleteIntent(actionIntent(ctx, ActionReceiver.ACTION_DISMISSED))
             .apply {
-                if (v.riding) addAction(0, "我已下车", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_ACK))
-                else if (CommuteService.undoActive()) addAction(0, "撤销上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
-                else addAction(0, "记：上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
+                if (v.riding) addAction(0, "点击通知 确认下车", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_ACK))
+                else if (CommuteService.undoActive()) addAction(0, "点击通知 撤销上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
+                else addAction(0, "点击通知 确认上车", actionIntent(ctx, ActionReceiver.ACTION_BOARDED))
             }
-            .addAction(0, if (v.riding) "结束行程" else "关闭提醒", actionIntent(ctx, ActionReceiver.ACTION_STOP))
+            .addAction(0, if (v.riding) "点击通知 结束本次行程" else "点击通知 结束本次提醒", actionIntent(ctx, ActionReceiver.ACTION_STOP))
 
     private fun openApp(ctx: Context) = PendingIntent.getActivity(
         ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),

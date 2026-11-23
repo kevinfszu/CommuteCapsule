@@ -36,7 +36,7 @@ object LearnReport {
                 val r = Learn.ride(ctx, trip.id, i, leg)
                 val st = Learn.rideStat(ctx, trip.id, i)
                 val note = buildString {
-                    append(if (st.values.isEmpty()) "暂无实测" else "${st.values.size} 次实测")
+                    append(if (st.values.isEmpty()) "暂无实测" else "已学到 · ${st.values.size} 次样本")
                     if (r.source == Learn.Ride.Source.DEFAULT && leg.isMetroOnly()) append(" · 运行时可能按站数估算")
                 }
                 LegLine(i, leg.title().ifEmpty { "未设置" }, "${r.minutes} 分钟", sourceText(r.source), note)
@@ -44,16 +44,26 @@ object LearnReport {
 
             val nodes = mutableListOf<Line>()
             trip.legs.indices.forEach { i ->
-                val suffix = if (trip.legs.size > 1) " ${i + 1}" else ""
+                val suffix = if (trip.legs.size > 1) " · ${trip.legs[i].title().ifEmpty { "第 ${i + 1} 段" }}" else ""
                 nodes += statLine("进站→上车$suffix", Learn.nodeStat(ctx, Learn.Metric.WAIT, "${trip.id}#$i"))
                 nodes += statLine("下车→出站$suffix", Learn.nodeStat(ctx, Learn.Metric.EXIT_WALK, "${trip.id}#$i"))
                 nodes += statLine("提醒→确认下车$suffix", Learn.nodeStat(ctx, Learn.Metric.REACT, "${trip.id}#$i"))
-                if (i > 0) nodes += statLine("换乘步行$suffix", Learn.nodeStat(ctx, Learn.Metric.TRANSFER, "${trip.id}#$i"))
+                if (i > 0) {
+                    nodes += statLine("换乘步行$suffix", Learn.nodeStat(ctx, Learn.Metric.TRANSFER, "${trip.id}#$i"))
+                    val bc = Learn.boardClockStat(ctx, trip.id, i)
+                    val med = bc.median
+                    nodes += if (med != null) {
+                        Line("换乘站上车时刻$suffix", mm(med), "已学到 · ${bc.values.size} 次人工样本", true)
+                    } else {
+                        Line("换乘站上车时刻$suffix", "样本不足", "${bc.values.size}/${bc.need} 次人工样本", false)
+                    }
+                }
                 Learn.busSpeed(ctx, trip.id, i)?.let {
                     nodes += Line("公交沿线速度$suffix", "${it.toInt()} 米/分钟", "指数平均", true)
                 }
             }
             nodes += statLine("下车→到达", Learn.nodeStat(ctx, Learn.Metric.LAST_WALK, trip.id))
+            nodes += statLine("全程时长", Learn.nodeStat(ctx, Learn.Metric.TRIP, trip.id))
 
             TripBlock(trip.name, habit, walks, legs, nodes)
         }
@@ -99,9 +109,14 @@ object LearnReport {
     private fun statLine(label: String, st: Learn.Stat): Line {
         val med = st.median
         return if (med != null) {
-            Line(label, dur(med), "${st.values.size} 次 · 中位数", true)
+            val spread = if (st.values.size >= 2) (st.values.max() - st.values.min()) / 2 else 0
+            Line(
+                label, dur(med),
+                "已学到 · ${st.values.size} 次人工样本" + if (spread > 0) " · 波动 ±${dur(spread)}" else "",
+                true,
+            )
         } else {
-            Line(label, "样本不足", "${st.values.size}/${st.need} 次", false)
+            Line(label, "暂无样本", "跑一次这趟行程后生效", false)
         }
     }
 

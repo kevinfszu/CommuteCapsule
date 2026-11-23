@@ -21,16 +21,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
@@ -38,6 +41,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,6 +73,7 @@ import com.busnotice.commute.LiveSnapshot
 import com.busnotice.commute.Transit
 import com.busnotice.commute.NodeLog
 import com.busnotice.commute.Trip
+import kotlinx.coroutines.launch
 
 /** 线路名缩短：纯数字线路（如「23路」「2号线」）只留数字，否则原样 */
 fun shortLine(name: String): String {
@@ -159,10 +164,13 @@ private val Tnum = TextStyle(fontFeatureSettings = "tnum")
 fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Unit)? = null) {
     val ctx = LocalContext.current
     var confirmEnd by remember { mutableStateOf(false) }
-    // 到站打卡：可打卡站点与已打卡记录由服务发布，不依赖 LiveSnapshot 的刷新频率
-    val stopNames by CommuteService.stopChoices.collectAsState()
-    val stopMarks by CommuteService.stopMarksUi.collectAsState()
+    val demo = s.tripId == com.busnotice.commute.DemoPlayer.TRIP_ID
+    // 到站打卡：可打卡站点与已打卡记录由服务发布；演示回放用自己内存里的模拟数据
+    val stopNames by (if (demo) com.busnotice.commute.DemoPlayer.stopChoices else CommuteService.stopChoices).collectAsState()
+    val stopMarks by (if (demo) com.busnotice.commute.DemoPlayer.stopMarksUi else CommuteService.stopMarksUi).collectAsState()
     var pickStop by remember { mutableStateOf(false) }
+    var showStopEtas by remember(s.tripId) { mutableStateOf(false) }
+    val curNodeRef by NodeLog.current.collectAsState()
     val leg = trip?.legs?.getOrNull(s.legIndex)
     val cands = leg?.candidates.orEmpty()
     val shown = cands.filter { s.legTitle.contains(it.label()) }.take(3).ifEmpty { cands.take(1) }
@@ -170,8 +178,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
     // 本段下车站：填了就用，换乘段没填时用下一段上车站
     val alightName = leg?.candidates?.firstOrNull { it.alightName.isNotEmpty() }?.alightName
         ?: trip?.legs?.getOrNull(s.legIndex + 1)?.candidates?.firstOrNull()?.stopName
-    val demo = s.tripId == com.busnotice.commute.DemoPlayer.TRIP_ID
-    val demoWalk = demo && (s.headline.startsWith("步行") || s.headline == "已到达")
+    val demoWalk = demo && (s.headline == "已到达" || s.detail.startsWith("出站后步行"))
     val headText = when {
         demoWalk && s.headline == "已到达" -> "广州国际金融城"
         demoWalk -> "科韵路"
@@ -223,7 +230,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
             if (big != null) {
                 val caption = when {
                     s.riding -> "乘车中"
-                    s.detail.startsWith("步行") -> "步行到站"
+                    demoWalk || s.detail.startsWith("步行") -> "步行到站"
                     else -> "候车"
                 }
                 Column {
@@ -246,8 +253,15 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
             }
         }
 
-        // 节点时间轴：点当前节点记「现在」，长按任意节点补录；演示回放不显示
-        if (s.tripId != com.busnotice.commute.DemoPlayer.TRIP_ID) {
+        // 节点时间轴：点当前节点记「现在」，长按任意节点补录；演示回放显示模拟节点，只读
+        if (demo) {
+            val demoNodes by com.busnotice.commute.DemoPlayer.nodes.collectAsState()
+            val demoCur by com.busnotice.commute.DemoPlayer.currentNode.collectAsState()
+            NodeTimeline(
+                trip = trip, nodes = demoNodes, current = demoCur, editable = false, dark = true,
+                onTap = {}, onLongPress = { _, _ -> },
+            )
+        } else {
             val nodes by NodeLog.flow.collectAsState()
             val curNode by NodeLog.current.collectAsState()
             NodeTimeline(
@@ -257,6 +271,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
                     else CommuteService.instance?.undoNodeIfFresh(ref)
                 },
                 onLongPress = { ref, at -> CommuteService.instance?.setNodeAt(ref.kind, ref.leg, at) },
+                eta = s.nodeEta,
             )
         }
 
@@ -287,14 +302,86 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
             }
         }
 
-        if (!demo) Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // 下一站预计到站：站点打卡后按学到的区间时长实时更新
+        s.stopEta.firstOrNull()?.let { next ->
+            Text(
+                "下一站 ${next.name} 约 ${clockOf(next.at)}", color = Color.White.copy(alpha = 0.72f),
+                fontSize = 13.sp, style = Tnum, modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+
+        // 逐级重算结果：本段 / 全程预计结束，以及后续各站到站时刻
+        val legEnd = s.legEndAt
+        val tripEnd = s.tripEndAt
+        val parts = buildList {
+            legEnd?.let { add("本段约 ${clockOf(it)} 到") }
+            if (s.legCount > 1 && tripEnd != null) add("全程约 ${clockOf(tripEnd)} 结束")
+        }
+        if (parts.isNotEmpty()) {
+            Text(
+                parts.joinToString(" · "), color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp,
+                style = Tnum, modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+        if (s.stopEta.isNotEmpty()) {
+            Row(
+                Modifier.padding(top = 2.dp).fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                    .clickable { showStopEtas = !showStopEtas }.padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "后续各站到站时间", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    if (showStopEtas) "收起" else "展开 ${s.stopEta.size} 站",
+                    color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+                )
+            }
+            if (showStopEtas) {
+                Column(Modifier.fillMaxWidth()) {
+                    s.stopEta.forEach { e ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                e.name, color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                "约 " + clockOf(e.at), color = Color.White.copy(alpha = 0.7f),
+                                fontSize = 13.sp, style = Tnum,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (!demoWalk) Row(Modifier.padding(top = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val undoAt by CommuteService.undoUntil.collectAsState()
-            val canUndo = undoAt > System.currentTimeMillis()
+            val canUndo = !demo && undoAt > System.currentTimeMillis()
             when {
                 // 刚手点过「已上车」：2 分钟内这个按钮是撤销，防误点、防连点跳两段
                 canUndo -> Pill("撤销上车", Color.White.copy(alpha = 0.12f), Fuse.Yellow, Fuse.Yellow.copy(alpha = 0.5f), Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
-                !s.riding -> Pill("确认上车", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) { CommuteService.instance?.onBoarded() }
-                stopNames.size > 1 -> Pill("到站打卡", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) { pickStop = true }
+                // 最后一段地铁已下车：现在刷闸机出站；出站后再点一次就是「到达」
+                !demo && curNodeRef?.kind == NodeLog.Kind.EXIT ->
+                    Pill("现在出站", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) { CommuteService.instance?.stampCurrentNode() }
+                !demo && curNodeRef?.kind == NodeLog.Kind.ARRIVE ->
+                    Pill("现在到达", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) { CommuteService.instance?.stampCurrentNode() }
+                !s.riding -> Pill("确认上车", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) {
+                    if (demo) com.busnotice.commute.DemoPlayer.onBoarded() else CommuteService.instance?.onBoarded()
+                }
+                else -> {
+                    if (stopNames.size > 1) Pill("到站打卡", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) { pickStop = true }
+                    // 只剩本段下车站：静音与记录下车分开，静音不写任何节点，避免污染学习数据
+                    if (s.alightDue) {
+                        Pill("我知道了", Color.White.copy(alpha = 0.12f), Color.White, Color.White.copy(alpha = 0.2f), Modifier.weight(1f)) {
+                            if (demo) com.busnotice.commute.DemoPlayer.muteAlarm() else CommuteService.instance?.muteAlarm()
+                        }
+                        Pill("我已下车", Fuse.Yellow, Color(0xFF111111), null, Modifier.weight(1f)) {
+                            if (demo) com.busnotice.commute.DemoPlayer.ackAlight() else CommuteService.instance?.ackAlight()
+                        }
+                    }
+                }
             }
         }
         // 已打卡摘要：左侧点开选站弹窗，右侧「撤销」直接撤掉最近一次
@@ -315,7 +402,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
                 Text(
                     "撤销", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                        .clickable { CommuteService.instance?.undoLastStopMark() }
+                        .clickable { if (demo) com.busnotice.commute.DemoPlayer.undoLastStopMark() else CommuteService.instance?.undoLastStopMark() }
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                 )
             }
@@ -329,7 +416,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Text("结束行程", color = Color.White.copy(alpha = 0.5f), fontSize = 13.sp)
+            Text("结束行程", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
         }
     }
 
@@ -337,6 +424,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
         AlertDialog(
             onDismissRequest = { confirmEnd = false },
             shape = DialogShape, containerColor = Fuse.surface(dark),
+            titleContentColor = Fuse.ink(dark), textContentColor = Fuse.ink(dark),
             title = { Text("结束本次行程？") },
             text = { Text("结束后本次不再提醒，可在最近行程中补录节点。") },
             confirmButton = {
@@ -350,11 +438,20 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
         )
     }
 
-    // 到站打卡：以推算的当前站为中心，前后各列 5 站（不含上车站与下车站）
-    if (pickStop && stopNames.size > 1) {
-        val here = (s.stopsPassed ?: 0).coerceIn(0, stopNames.size - 1)
+    // 到站打卡：以真实位置为中心列出 ±5 站（不含上车站与下车站）
+    if (pickStop && stopNames.size > 2) {
+        val maxIdx = stopNames.size - 2
+        val markIdx = stopMarks.maxOfOrNull { it.idx }
+        // 预测值在到站提醒后可能变 null；打卡记录是真实到达，取两者更靠后的作为当前位置
+        val here = (listOfNotNull(s.stopsPassed, markIdx).maxOrNull() ?: 0).coerceIn(0, maxIdx)
         val from = (here - 5).coerceAtLeast(1)
-        val to = (here + 5).coerceAtMost(stopNames.size - 1)
+        val to = (here + 5).coerceAtMost(maxIdx)
+        val rows = (from..to).toList()
+        val rowHeight = 46.dp
+        val listHeight = rowHeight * rows.size.coerceAtMost(8)
+        val listState = rememberLazyListState(
+            initialFirstVisibleItemIndex = (here - from - 2).coerceIn(0, (rows.size - 1).coerceAtLeast(0)),
+        )
         AlertDialog(
             onDismissRequest = { pickStop = false },
             shape = DialogShape, containerColor = Fuse.surface(dark),
@@ -362,14 +459,19 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
             text = {
                 Column {
                     Text("记录当前时刻，用来校正后面的到站时间", color = Fuse.dim(dark), fontSize = 13.sp)
-                    LazyColumn(Modifier.padding(top = 8.dp).heightIn(max = 380.dp)) {
-                        items((from..to).toList(), key = { it }) { i ->
+                    if (rows.size > 8) Text(
+                        "共 ${rows.size} 站，可上下滑动",
+                        color = Fuse.dim(dark).copy(alpha = 0.7f), fontSize = 12.sp,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    LazyColumn(Modifier.padding(top = 8.dp).fillMaxWidth().height(listHeight), state = listState) {
+                        items(rows, key = { it }) { i ->
                             val m = stopMarks.firstOrNull { it.idx == i }
                             Row(
                                 Modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(10.dp))
                                     .background(if (m != null) Fuse.accent(dark).copy(alpha = 0.10f) else Color.Transparent)
                                     .clickable {
-                                        CommuteService.instance?.markStop(i)
+                                        if (demo) com.busnotice.commute.DemoPlayer.markStop(i) else CommuteService.instance?.markStop(i)
                                         pickStop = false
                                     }
                                     .padding(horizontal = 10.dp, vertical = 11.dp),
@@ -392,7 +494,7 @@ fun LiveBoard(s: LiveSnapshot, trip: Trip?, dark: Boolean, onStopped: (() -> Uni
                                 color = Fuse.dim(dark), fontSize = 12.sp, modifier = Modifier.weight(1f))
                             Text("撤销", color = Fuse.accent(dark), fontSize = 13.sp, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.clip(RoundedCornerShape(8.dp))
-                                    .clickable { CommuteService.instance?.undoLastStopMark() }
+                                    .clickable { if (demo) com.busnotice.commute.DemoPlayer.undoLastStopMark() else CommuteService.instance?.undoLastStopMark() }
                                     .padding(horizontal = 8.dp, vertical = 4.dp))
                         }
                     }
@@ -484,7 +586,23 @@ private fun StopDots(passed: Int, total: Int, from: String? = null, curName: Str
     }
 }
 
-/** 一条节点时间轴：点当前节点记「现在」，长按任意节点打开时间滚轮补录 */
+private val LegKinds = listOf(NodeLog.Kind.ENTER, NodeLog.Kind.BOARD, NodeLog.Kind.ALIGHT, NodeLog.Kind.EXIT)
+
+/** 节点名：同一种节点出现多次时追加段号（如「下车 2」），避免换乘时看不出是哪一段 */
+private fun nodeLabel(refs: List<NodeLog.NodeRef>, kind: NodeLog.Kind, leg: Int): String {
+    val dup = refs.count { it.kind == kind } > 1
+    val maxLeg = refs.filter { it.kind == kind }.maxOfOrNull { it.leg } ?: leg
+    // 多段行程把「换乘下车 / 换乘上车 / 终点下车」说清楚，避免只看时刻不知道是哪个动作
+    val base = when {
+        kind == NodeLog.Kind.BOARD && leg > 0 -> "换乘上车"
+        kind == NodeLog.Kind.ALIGHT && leg < maxLeg -> "换乘下车"
+        kind == NodeLog.Kind.ALIGHT && maxLeg > 0 -> "终点下车"
+        else -> NodeLog.label(kind)
+    }
+    return base + if (dup && kind in LegKinds) " ${leg + 1}" else ""
+}
+
+/** 一条节点时间轴：点当前节点记「现在」，长按任意节点打开时间滚轮补录；未记录的节点显示预测时刻 */
 @Composable
 fun NodeTimeline(
     trip: Trip?,
@@ -495,12 +613,15 @@ fun NodeTimeline(
     onTap: (NodeLog.NodeRef) -> Unit,
     onLongPress: (NodeLog.NodeRef, Long) -> Unit,
     onDelete: ((NodeLog.NodeRef) -> Unit)? = null,
+    tapOpens: Boolean = false,
+    eta: List<com.busnotice.commute.TimelineProjection.NodeEta> = emptyList(),
 ) {
     if (trip == null) return
     val eff = remember(nodes) { NodeLog.effective(nodes) }
     val refs = remember(trip) { NodeLog.timeline(trip) }
     var editing by remember { mutableStateOf<Pair<NodeLog.NodeRef, Int>?>(null) }
     var askClear by remember { mutableStateOf<NodeLog.NodeRef?>(null) }
+    var askDelete by remember { mutableStateOf<NodeLog.NodeRef?>(null) }
     val ink = Fuse.ink(dark)
     val chipBg = if (dark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.05f)
 
@@ -510,14 +631,16 @@ fun NodeTimeline(
     ) {
         refs.forEach { ref ->
             val st = eff[ref]
+            // 还没记录的节点：用逐级重算出的预测时刻补位，避免整条轴都是「—」
+            val etaAt = if (st == null) eta.firstOrNull { it.kind == ref.kind && it.leg == ref.leg }?.at else null
             val isCur = current == ref
-            val dup = refs.count { it.kind == ref.kind } > 1
-            val label = NodeLog.label(ref.kind) + if (dup && ref.kind in listOf(NodeLog.Kind.ENTER, NodeLog.Kind.BOARD, NodeLog.Kind.ALIGHT, NodeLog.Kind.EXIT)) " ${ref.leg + 1}" else ""
-            val estimated = st?.src == NodeLog.Src.ESTIMATED || st?.src == NodeLog.Src.AUTO
+            val label = nodeLabel(refs, ref.kind, ref.leg)
+            val estimated = st?.src == NodeLog.Src.ESTIMATED || st?.src == NodeLog.Src.AUTO || etaAt != null
             val timeColor = when {
                 isCur -> Fuse.Yellow
+                st == null && etaAt != null -> ink.copy(alpha = 0.6f)
                 st == null -> ink.copy(alpha = 0.35f)
-                st.src == NodeLog.Src.TAP -> Fuse.BusGreen
+                st.src == NodeLog.Src.TAP || st.src == NodeLog.Src.MANUAL -> Fuse.BusGreen
                 st.src == NodeLog.Src.ESTIMATED -> ink.copy(alpha = 0.5f)
                 st.src == NodeLog.Src.BACKFILL -> Fuse.Yellow
                 st.src == NodeLog.Src.AUTO -> ink.copy(alpha = 0.75f)
@@ -532,17 +655,25 @@ fun NodeTimeline(
                     .then(if (isCur) Modifier.border(1.dp, Fuse.Yellow, RoundedCornerShape(10.dp)) else Modifier)
                     .semantics {
                         role = Role.Button
-                        contentDescription = label + " " + (st?.let { (if (estimated) "约" else "") + hhmm(it.at) } ?: "未记录") +
+                        contentDescription = label + " " + (st?.let { (if (estimated) "约" else "") + hhmm(it.at) }
+                            ?: etaAt?.let { "预计 " + hhmm(it) } ?: "未记录") +
                             if (isCur) " 当前" else ""
                     }
-                    .pointerInput(ref, st, editable) {
+                    .pointerInput(ref, st, editable, tapOpens, etaAt) {
                         detectTapGestures(
-                            onTap = { if (editable) onTap(ref) },
+                            onTap = {
+                                if (editable) {
+                                    // 点按即编辑（最近行程用）；看板里点按仍是「记录现在」
+                                    if (tapOpens) {
+                                        if (onDelete != null && st != null) askClear = ref
+                                        else editing = ref to minuteOf(st?.at ?: System.currentTimeMillis())
+                                    } else onTap(ref)
+                                }
+                            },
                             onLongPress = {
                                 if (editable) {
-                                    // 已有记录的节点：先问「改时间还是删掉」，避免补录错了没法回头
                                     if (onDelete != null && st != null) askClear = ref
-                                    else editing = ref to minuteOf(st?.at ?: System.currentTimeMillis())
+                                    else editing = ref to minuteOf(st?.at ?: etaAt ?: System.currentTimeMillis())
                                 }
                             },
                         )
@@ -550,9 +681,9 @@ fun NodeTimeline(
                     .padding(horizontal = 8.dp, vertical = 7.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(label, color = ink.copy(alpha = if (isCur) 0.9f else 0.55f), fontSize = 10.sp, maxLines = 1)
+                Text(label, color = ink.copy(alpha = if (isCur) 0.9f else 0.55f), fontSize = 11.sp, maxLines = 1)
                 Text(
-                    (if (estimated) "≈" else "") + (st?.let { hhmm(it.at) } ?: "—"),
+                    (if (estimated) "≈" else "") + (st?.let { hhmm(it.at) } ?: etaAt?.let { hhmm(it) } ?: "—"),
                     color = timeColor, fontSize = 13.sp, fontWeight = FontWeight.Bold,
                     maxLines = 1, style = Tnum,
                 )
@@ -565,26 +696,45 @@ fun NodeTimeline(
         AlertDialog(
             onDismissRequest = { askClear = null },
             shape = DialogShape, containerColor = Fuse.surface(dark),
-            title = { Text("${NodeLog.label(ref.kind)} ${hhmm(at)}") },
-            text = { Text("这条已记下。可以改时间，也可以删掉重新补录。") },
+            titleContentColor = ink, textContentColor = ink.copy(alpha = 0.78f),
+            title = { Text(nodeLabel(refs, ref.kind, ref.leg) + " · " + hhmm(at)) },
+            text = { Text("这条记录可以改时间；删掉后能重新补录。") },
             confirmButton = {
-                DialogButton("改时间", primary = true, onClick = {
+                DialogButton("改时间", primary = true, onDark = dark, onClick = {
                     askClear = null
                     editing = ref to minuteOf(at)
                 })
             },
             dismissButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    DialogButton("删除", danger = true, onClick = { askClear = null; onDelete?.invoke(ref) })
-                    DialogButton("取消", onClick = { askClear = null })
+                    DialogButton("删除", danger = true, onDark = dark, onClick = { askClear = null; askDelete = ref })
+                    DialogButton("取消", onDark = dark, onClick = { askClear = null })
                 }
             },
         )
     }
 
+    askDelete?.let { ref ->
+        val name = nodeLabel(refs, ref.kind, ref.leg)
+        AlertDialog(
+            onDismissRequest = { askDelete = null },
+            shape = DialogShape, containerColor = Fuse.surface(dark),
+            titleContentColor = ink, textContentColor = ink.copy(alpha = 0.78f),
+            title = { Text("删除「$name」？") },
+            text = { Text("删掉后这一条会变回「—」，随时可以点它重新补录。") },
+            confirmButton = {
+                DialogButton("删除", danger = true, onDark = dark, onClick = {
+                    askDelete = null
+                    onDelete?.invoke(ref)
+                })
+            },
+            dismissButton = { DialogButton("取消", onDark = dark, onClick = { askDelete = null }) },
+        )
+    }
+
     editing?.let { (ref, minute) ->
         TimeWheelSheet(
-            title = "${NodeLog.label(ref.kind)} 时间",
+            title = "${nodeLabel(refs, ref.kind, ref.leg)} 时间",
             initialMinute = minute,
             onDismiss = { editing = null },
             onConfirm = { m ->
@@ -595,23 +745,31 @@ fun NodeTimeline(
     }
 }
 
-/** 结束后的「最近行程」：完整时间轴，可长按补录 */
+/** 结束后的「最近行程」：默认收起成一行摘要，展开后是完整时间轴，点按节点即可改/删 */
 @Composable
-fun RecentRunCard(trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean) {
+fun RecentRunCard(
+    trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean,
+    snack: SnackbarHostState? = null,
+) {
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     var list by remember { mutableStateOf(nodes) }
     androidx.compose.runtime.LaunchedEffect(nodes) { list = nodes }
+    var expanded by remember { mutableStateOf(false) }
     val first = nodes.minOfOrNull { it.at }
     val last = nodes.maxOfOrNull { it.at }
     val durMin = if (first != null && last != null) ((last - first) / 60_000L).toInt() else 0
     Column(Modifier.fillMaxWidth().board(dark).padding(16.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { expanded = !expanded },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             // 看板底色永远是深色，文字固定白色，不能跟随主题的 ink
             Text("最近行程", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(8.dp))
             Text(trip.name, color = Color.White.copy(alpha = 0.65f), fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            Text("长按节点可改/删", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp)
+            Text(if (expanded) "收起" else "展开", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp)
         }
         if (first != null && last != null) {
             Text(
@@ -620,19 +778,39 @@ fun RecentRunCard(trip: Trip, nodes: List<NodeLog.Stamp>, dark: Boolean) {
                 modifier = Modifier.padding(top = 4.dp), style = Tnum,
             )
         }
+        if (!expanded) return@Column
+        Text("点按节点可改/删", color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp,
+            modifier = Modifier.padding(top = 10.dp))
         NodeTimeline(
             trip = trip, nodes = list, current = null, editable = true, dark = true,
-            onTap = {},
+            onTap = {}, tapOpens = true,
             onLongPress = { ref, at ->
                 val next = list + NodeLog.Stamp(ref.kind, ref.leg, at, NodeLog.Src.BACKFILL)
                 NodeLog.updateLast(ctx, next)
                 list = next
             },
             onDelete = { ref ->
+                val prev = list
                 val next = list.filterNot { it.kind == ref.kind && it.leg == ref.leg }
                 NodeLog.updateLast(ctx, next)
                 list = next
+                val host = snack
+                if (host != null) {
+                    val name = nodeLabel(NodeLog.timeline(trip), ref.kind, ref.leg)
+                    scope.launch {
+                        val r = host.showSnackbar("已删除「$name」", actionLabel = "撤销", duration = SnackbarDuration.Short)
+                        if (r == SnackbarResult.ActionPerformed) {
+                            NodeLog.updateLast(ctx, prev)
+                            list = prev
+                        }
+                    }
+                }
             },
+        )
+        Text(
+            "绿色＝手动记录 · 黄色＝补录 · 浅色＝推算 · ≈＝估算",
+            color = Color.White.copy(alpha = 0.55f), fontSize = 11.sp,
+            modifier = Modifier.padding(top = 10.dp),
         )
     }
 }

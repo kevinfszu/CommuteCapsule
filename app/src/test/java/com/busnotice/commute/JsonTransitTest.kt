@@ -270,6 +270,46 @@ class JsonTransitTest {
     }
 
     @Test
+    fun `service keeps sixteen bands`() {
+        val bands = (0 until 16).joinToString(",") { i ->
+            """{ "from": "%02d:00", "to": "%02d:00", "headwaySec": 360 }""".format(i, i + 1)
+        }
+        val json = """{ "lines": [ { "id": "x", "name": "X", "subway": true,
+            "service": { "weekday": [ $bands ] },
+            "stops": [ { "name": "A", "lat": 1.0, "lng": 1.0 }, { "name": "B", "lat": 1.1, "lng": 1.1 } ] } ] }"""
+        assertEquals(16, JsonTransit.parse(json).lines.single().weekdayBands.size)
+    }
+
+    @Test
+    fun `updateLineParams can replace or clear service`() {
+        val rich = """{ "region": "gz", "lines": [
+            { "id": "r1", "name": "R", "subway": true,
+              "first": "06:00", "last": "23:00", "hopSec": 140,
+              "service": { "weekday": [ { "from": "06:00", "to": "09:00", "headwaySec": 360 } ] },
+              "stops": [ { "name": "A", "lat": 23.0, "lng": 113.0 }, { "name": "B", "lat": 23.1, "lng": 113.1 } ] }
+        ] }"""
+        val replaced = JsonTransit.parse(
+            JsonTransit.updateLineParams(
+                rich, "R", 140, emptyMap(),
+                listOf(HeadwayBand(6 * 60, 8 * 60, 300), HeadwayBand(8 * 60, 10 * 60, 420)) to
+                    listOf(HeadwayBand(6 * 60, 10 * 60, 480)),
+            ),
+        ).lines.single()
+        assertEquals(listOf(300, 420), replaced.weekdayBands.map { it.headwaySec })
+        assertEquals(listOf(480), replaced.weekendBands.map { it.headwaySec })
+
+        val cleared = JsonTransit.parse(
+            JsonTransit.updateLineParams(rich, "R", 140, emptyMap(), emptyList<HeadwayBand>() to emptyList()),
+        ).lines.single()
+        assertTrue(cleared.weekdayBands.isEmpty())
+        assertTrue(cleared.weekendBands.isEmpty())
+
+        // 不传 service 时保持原值
+        val kept = JsonTransit.parse(JsonTransit.updateLineParams(rich, "R", 140, emptyMap())).lines.single()
+        assertEquals(listOf(360), kept.weekdayBands.map { it.headwaySec })
+    }
+
+    @Test
     fun `updateLineParams changes hop and direction clocks only`() {
         val rich = """{ "region": "gz", "meta": { "source": "测试" }, "lines": [
             { "id": "r1", "name": "R", "subway": true, "reverseId": "r2", "color": "F9BE58",

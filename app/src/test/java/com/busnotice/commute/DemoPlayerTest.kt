@@ -1,6 +1,8 @@
 package com.busnotice.commute
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DemoPlayerTest {
@@ -19,18 +21,41 @@ class DemoPlayerTest {
     }
 
     @Test fun frameBeforeDeparture() {
-        assertEquals("3 分钟后出发", DemoPlayer.frame(at(8, 0)).first.headline)
+        assertEquals("3 分钟后出发", DemoPlayer.frame(at(8, 9)).first.headline)
     }
 
     @Test fun frameWalkingToStation() {
-        assertEquals("约 5 分", DemoPlayer.frame(at(8, 3)).first.headline)
+        assertEquals("约 4 分", DemoPlayer.frame(at(8, 12)).first.headline)
+    }
+
+    @Test fun frameRideBeforeLastStop() {
+        val s = DemoPlayer.frame(at(8, 26)).first
+        assertEquals("约 2 分", s.headline)
+        assertFalse(s.alightDue)
+        assertEquals(4, s.stopsPassed)
+    }
+
+    @Test fun frameAlightDueAtLastStop() {
+        val s = DemoPlayer.frame(at(8, 27)).first
+        assertEquals("即将到达", s.headline)
+        assertTrue(s.alightDue)
+        assertEquals(5, s.stopsPassed)
+        assertEquals("琶洲", s.curStop)
+        assertEquals("员村", s.toStop)
     }
 
     @Test fun frameTransferAtYuancun() {
-        assertEquals("换乘 5号线", DemoPlayer.frame(at(8, 24)).first.headline)
+        assertEquals("约 3 分", DemoPlayer.frame(at(8, 28)).first.headline)
+    }
+
+    @Test fun frameFinalLegOneStop() {
+        val s = DemoPlayer.frame(at(8, 32)).first
+        assertEquals("即将到达", s.headline)
+        assertTrue(s.alightDue)
+        assertEquals(1, s.stopsTotal)
     }
 
     @Test fun frameArrived() {
-        assertEquals("已到达", DemoPlayer.frame(at(8, 50)).first.headline)
+        assertEquals("已到达", DemoPlayer.frame(at(8, 37)).first.headline)
     }
 }

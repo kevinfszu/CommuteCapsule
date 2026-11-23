@@ -61,8 +61,23 @@ class AmapDataTest {
         return URLEncoder.encode(obj.toString(), "UTF-8")
     }
 
-    private fun raw13(): String {
-        val stops = (1..15).map { "站$it" }
+    /** 构造任意 day_type / 时段的 timedesc */
+    private fun timedesc(days: List<String>, bands: List<Triple<String, String, String>>): String {
+        val tg = JSONArray()
+        bands.forEach { (from, to, headway) ->
+            tg.put(JSONObject().put("start_time", from).put("end_time", to).put("interval_time", headway))
+        }
+        val obj = JSONObject().put(
+            "rule_group", JSONArray().put(
+                JSONObject()
+                    .put("date", JSONObject().put("day_type", JSONArray(days)))
+                    .put("time_group", tg),
+            ),
+        )
+        return URLEncoder.encode(obj.toString(), "UTF-8")
+    }
+
+    private fun raw13(): String {        val stops = (1..15).map { "站$it" }
         val td = timedesc13()
         return JSONObject().put("status", "1").put(
             "buslines", JSONArray()
@@ -136,6 +151,88 @@ class AmapDataTest {
         assertEquals(15, doc.lines[0].stops.size)
         assertEquals(listOf(360, 420, 540, 660), doc.lines[0].weekdayBands.map { it.headwaySec })
         assertEquals(listOf(360, 480, 600), doc.lines[0].weekendBands.map { it.headwaySec })
+    }
+
+    @Test
+    fun `day type all fills both weekday and weekend and derives clocks`() {
+        val td = timedesc(
+            listOf("all"),
+            listOf(
+                Triple("06:00:00", "10:00:00", "00:05:00"),
+                Triple("10:00:00", "22:00:00", "00:08:00"),
+            ),
+        )
+        val raw = JSONObject().put("status", "1").put(
+            "buslines", JSONArray().put(
+                line("900000000001", "1路(甲--乙)", "", "甲", "乙", "", "", "000000", false, "900000000002", listOf("甲", "乙", "丙"), td),
+            ),
+        ).toString()
+        val hit = AmapData.parseHits(raw).single()
+        assertEquals(2, hit.weekdayBands.size)
+        assertEquals(2, hit.weekendBands.size)
+        assertEquals(6 * 60, hit.firstMin)
+        assertEquals(22 * 60, hit.lastMin)
+    }
+
+    @Test
+    fun `day type with weekday and weekend in one group fills both`() {
+        val td = timedesc(listOf("weekend", "weekday"), listOf(Triple("06:00:00", "22:30:00", "00:07:00")))
+        val raw = JSONObject().put("status", "1").put(
+            "buslines", JSONArray().put(
+                line("900000000003", "2路(甲--乙)", "", "甲", "乙", "", "", "000000", false, "900000000004", listOf("甲", "乙"), td),
+            ),
+        ).toString()
+        val hit = AmapData.parseHits(raw).single()
+        assertEquals(1, hit.weekdayBands.size)
+        assertEquals(1, hit.weekendBands.size)
+    }
+
+    @Test
+    fun `sixteen timedesc bands survive build and parse`() {
+        val bands = (6..21).map { h ->
+            Triple("%02d:00:00".format(h), "%02d:00:00".format(h + 1), "00:05:00")
+        }
+        val td = timedesc(listOf("weekday"), bands)
+        val raw = JSONObject().put("status", "1").put(
+            "buslines", JSONArray().put(
+                line("900000000005", "3路(甲--乙)", "", "甲", "乙", "0600", "2200", "000000", false, "900000000006", listOf("甲", "乙"), td),
+            ),
+        ).toString()
+        val hits = AmapData.parseHits(raw)
+        assertEquals(16, hits.single().weekdayBands.size)
+        val doc = JsonTransit.parse(AmapData.buildLines(raw, hits, emptySet(), "gz", 120, emptyMap()))
+        assertEquals(16, doc.lines.single().weekdayBands.size)
+    }
+
+    @Test
+    fun `explicit service overrides timedesc for all directions`() {
+        val raw = raw13()
+        val hits = AmapData.parseHits(raw)
+        val service = AmapData.ServiceBands(listOf(HeadwayBand(6 * 60, 8 * 60, 300)), emptyList())
+        val doc = JsonTransit.parse(AmapData.buildLines(raw, hits, emptySet(), "gz", 120, emptyMap(), service))
+        assertTrue(
+            doc.lines.all {
+                it.weekdayBands.map { b -> b.headwaySec } == listOf(300) && it.weekendBands.isEmpty()
+            },
+        )
+    }
+
+    @Test
+    fun `invalid timedesc bands are dropped`() {
+        val td = timedesc(
+            listOf("weekday"),
+            listOf(
+                Triple("09:00:00", "06:00:00", "00:05:00"),
+                Triple("06:00:00", "09:00:00", "00:00:10"),
+            ),
+        )
+        val raw = JSONObject().put("status", "1").put(
+            "buslines", JSONArray().put(
+                line("900000000007", "4路(甲--乙)", "", "甲", "乙", "0600", "2200", "000000", false, "900000000008", listOf("甲", "乙"), td),
+            ),
+        ).toString()
+        val hit = AmapData.parseHits(raw).single()
+        assertTrue(hit.weekdayBands.isEmpty())
     }
 
     @Test

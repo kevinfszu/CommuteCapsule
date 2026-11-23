@@ -83,11 +83,23 @@
 `service.weekday` / `service.weekend` 是 band 数组，每段 `{ "from": "HH:mm", "to": "HH:mm", "headwaySec": 360 }`：
 
 - `headwaySec` 单位是**秒**，30–1800；例如 5 分 20 秒写 `320`；
-- `from < to`，按时间升序，最多 8 段；`to` 可以写 `24:00`；
+- `from < to`，按时间升序，最多 24 段；`to` 可以写 `24:00`；
 - 时段之外的时刻取最近一段的间隔；
 - 整段省略时，地铁按高峰 360 秒 / 平峰 540 秒，非地铁 600 / 900，高峰默认 `07:00-09:30`、`17:00-19:30`；
+- `service.weekend` 省略或为空数组时复制 `weekday`；
 - 站点首末班 = 始发站首末班 + `站序 × hopSec`，站序从 0 开始；
-- App 里添加地铁会带出这张表，编辑行程时可以逐段改间隔（分 + 秒），时段沿用数据。
+- App 里添加地铁会带出这张表，编辑行程时可以逐段改间隔（分 + 秒），时段沿用数据；
+- 「线路导入」与「线路详情」都可以逐段修改起止时间和间隔、增删时段；空闲时段允许留空档。
+
+### 高德 timedesc 映射
+
+「用高德查询并生成」会解析 `buslines[].timedesc`（URL 编码的 JSON）：
+
+- `rule_group[].date.day_type` 支持 `weekday`、`weekend`、`all`；同一组同时包含 `weekday` 和 `weekend` 时两边都会写入；
+- `time_group[].start_time` / `end_time` / `interval_time` 都是 `HH:mm:ss`，转换后 `headwaySec` 取秒数；
+- `start_time` / `end_time` 为空或非法时，用 `timedesc` 的最早开始、最晚结束作为始发站首末班，仍没有再回退 `06:00` / `23:00`；
+- `peak_time_group` / `low_time_group` / `flat_time_group` 实测为空且官方无定义，不使用；
+- 生成前可在页面里修改分时段表；`timedesc` 为空时从空表开始，可手动添加。
 
 ### 方向与环线
 

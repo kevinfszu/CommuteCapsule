@@ -64,6 +64,9 @@ fun RecordsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+            if (records.isNotEmpty()) {
+                item { WeekCard(records, dark) }
+            }
             glassGroup(records, key = "records") { r ->
                 RunRow(r, onClick = { detail = r }, onDelete = { askDelete = r })
             }
@@ -76,6 +79,7 @@ fun RecordsScreen(onBack: () -> Unit) {
         AlertDialog(
             onDismissRequest = { askDelete = null },
             shape = DialogShape, containerColor = Fuse.surface(dark),
+            titleContentColor = Fuse.ink(dark), textContentColor = Fuse.ink(dark),
             title = { Text("删除这条行程记录？") },
             text = {
                 Text(
@@ -95,6 +99,39 @@ fun RecordsScreen(onBack: () -> Unit) {
             },
             dismissButton = { DialogButton("取消", onClick = { askDelete = null }) },
         )
+    }
+}
+
+@Composable
+private fun WeekCard(records: List<NodeLog.RunRecord>, dark: Boolean) {
+    val now = System.currentTimeMillis()
+    val week = records.filter { it.savedAt >= now - 7 * 86_400_000L && !it.aborted && !it.test }
+    if (week.isEmpty()) return
+    val ink = Fuse.ink(dark)
+    val dim = Fuse.dim(dark)
+    val durations = week.mapNotNull { r ->
+        val f = r.nodes.minOfOrNull { it.at }
+        val l = r.nodes.maxOfOrNull { it.at }
+        if (f != null && l != null) ((l - f) / 60_000L).toInt() else null
+    }
+    val avg = durations.takeIf { it.isNotEmpty() }?.average()?.toInt()
+    val coverage = week.count { it.marks.isNotEmpty() } * 100 / week.size
+    GlassCard {
+        SectionLabel("最近 7 天")
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column {
+                Text("完成", fontSize = 11.sp, color = dim)
+                Text("${week.size} 次", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle)
+            }
+            Column {
+                Text("平均全程", fontSize = 11.sp, color = dim)
+                Text(avg?.let { "$it 分钟" } ?: "—", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle)
+            }
+            Column {
+                Text("打卡覆盖", fontSize = 11.sp, color = dim)
+                Text("$coverage%", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = ink, style = TnumStyle)
+            }
+        }
     }
 }
 
@@ -197,10 +234,19 @@ private fun RecordDetail(r: NodeLog.RunRecord, onBack: () -> Unit, onDelete: () 
                     SectionLabel("到站打卡")
                     Text("共 ${r.marks.size} 次", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink,
                         modifier = Modifier.padding(top = 6.dp))
-                    Text(
-                        r.marks.joinToString(" · ") { hhmmText(it.at) },
-                        fontSize = 13.sp, color = dim, style = TnumStyle, modifier = Modifier.padding(top = 2.dp),
-                    )
+                    r.marks.sortedBy { it.idx }.forEach { m ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                r.markNames.getOrNull(m.idx) ?: "第 ${m.idx + 1} 站",
+                                fontSize = 13.sp, color = ink, modifier = Modifier.weight(1f),
+                                maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            Text(hhmmText(m.at), fontSize = 13.sp, color = dim, style = TnumStyle)
+                        }
+                    }
                 }
             }
         }
@@ -243,7 +289,14 @@ private fun nodeLabel(ref: NodeLog.NodeRef, refs: List<NodeLog.NodeRef>): String
     val suffix = if (dup && ref.kind in listOf(
             NodeLog.Kind.ENTER, NodeLog.Kind.BOARD, NodeLog.Kind.ALIGHT, NodeLog.Kind.EXIT,
         )) " ${ref.leg + 1}" else ""
-    return NodeLog.label(ref.kind) + suffix
+    val maxLeg = refs.filter { it.kind == ref.kind }.maxOfOrNull { it.leg } ?: ref.leg
+    val base = when {
+        ref.kind == NodeLog.Kind.BOARD && ref.leg > 0 -> "换乘上车"
+        ref.kind == NodeLog.Kind.ALIGHT && ref.leg < maxLeg -> "换乘下车"
+        ref.kind == NodeLog.Kind.ALIGHT && maxLeg > 0 -> "终点下车"
+        else -> NodeLog.label(ref.kind)
+    }
+    return base + suffix
 }
 
 private fun srcText(src: NodeLog.Src?): String = when (src) {

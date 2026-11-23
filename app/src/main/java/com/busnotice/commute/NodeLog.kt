@@ -217,6 +217,7 @@ object NodeLog {
         val aborted: Boolean = false,
         val test: Boolean = false,
         val marks: List<StopMark> = emptyList(),
+        val markNames: List<String> = emptyList(),
         val learned: List<String> = emptyList(),
     ) {
         fun toJson(): JSONObject = JSONObject()
@@ -224,6 +225,7 @@ object NodeLog {
             .put("trip", trip.toJson()).put("nodes", NodeLog.encode(nodes))
             .put("aborted", aborted).put("test", test)
             .put("marks", marks.joinToString(",") { "${it.idx}:${it.at}" })
+            .put("markNames", JSONArray().apply { markNames.forEach { put(it) } })
             .put("learned", JSONArray().apply { learned.forEach { put(it) } })
 
         companion object {
@@ -241,6 +243,9 @@ object NodeLog {
                     val at = kv[1].toLongOrNull() ?: return@mapNotNull null
                     StopMark(idx, at)
                 },
+                markNames = o.optJSONArray("markNames")?.let { a ->
+                    (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotEmpty) }
+                } ?: emptyList(),
                 learned = o.optJSONArray("learned")?.let { a ->
                     (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotEmpty) }
                 } ?: emptyList(),
@@ -251,9 +256,13 @@ object NodeLog {
     fun saveLastRun(
         ctx: Context, trip: Trip, nodes: List<Stamp>, at: Long = System.currentTimeMillis(),
         aborted: Boolean = false, test: Boolean = false,
-        marks: List<StopMark> = emptyList(), learned: List<String> = emptyList(),
+        marks: List<StopMark> = emptyList(), markNames: List<String> = emptyList(),
+        learned: List<String> = emptyList(),
     ) {
-        val rec = RunRecord(java.util.UUID.randomUUID().toString(), at, trip, nodes, aborted, test, marks, learned)
+        val rec = RunRecord(
+            id = java.util.UUID.randomUUID().toString(), savedAt = at, trip = trip, nodes = nodes,
+            aborted = aborted, test = test, marks = marks, markNames = markNames, learned = learned,
+        )
         writeHistory(ctx, (records(ctx, at) + rec).take(MAX_RECORDS))
     }
 

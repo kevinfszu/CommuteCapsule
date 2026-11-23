@@ -37,9 +37,14 @@ object AmapData {
         val lastMin: Int,
         val colorHex: String,    // 高德 uicolor
         val reverseAmapId: String,
+        val weekdayBands: List<HeadwayBand> = emptyList(),
+        val weekendBands: List<HeadwayBand> = emptyList(),
     )
 
     data class Stop(val name: String, val lat: Double, val lng: Double)
+
+    /** 生成数据源时统一使用的分时段发车间隔 */
+    data class ServiceBands(val weekday: List<HeadwayBand>, val weekend: List<HeadwayBand>)
 
     fun searchUrl(key: String, city: String, keywords: String): String =
         "$HOST?key=${enc(key.trim())}&city=${enc(city.trim())}&keywords=${enc(keywords.trim())}" +
@@ -60,6 +65,8 @@ object AmapData {
             val (name, dir) = cleanName(o.optString("name"))
             if (name.isEmpty()) return@mapNotNull null
             val stops = o.optJSONArray("busstops")
+            val (weekdayBands, weekendBands) = parseTimedesc(o.optString("timedesc"))
+            val allBands = weekdayBands + weekendBands
             Hit(
                 amapId = id,
                 name = name,
@@ -71,10 +78,13 @@ object AmapData {
                 subway = o.optString("type").contains("地铁"),
                 loop = o.optString("loop") == "1",
                 stopCount = stops?.length() ?: 0,
-                firstMin = hhmmToMin(o.optString("start_time")) ?: 6 * 60,
-                lastMin = hhmmToMin(o.optString("end_time")) ?: 23 * 60,
+                firstMin = hhmmToMin(o.optString("start_time")) ?: allBands.minOfOrNull { it.from } ?: 6 * 60,
+                lastMin = hhmmToMin(o.optString("end_time"))?.let { if (it == 0) 1440 else it }
+                    ?: allBands.maxOfOrNull { it.to } ?: 23 * 60,
                 colorHex = hexOf(o.optString("uicolor")),
                 reverseAmapId = o.optString("direc").trim(),
+                weekdayBands = weekdayBands,
+                weekendBands = weekendBands,
             )
         }
     }
@@ -114,6 +124,7 @@ object AmapData {
      * @param keepStops 保留的站名；为空表示全保留
      * @param hopSec 单站用时（秒），20–900
      * @param clocks 每个方向的首末班（分钟），缺省用高德值
+     * @param service 用户确认/修改后的分时段发车间隔；为空时用各方向高德 timedesc 的原值
      */
     fun buildLines(
         rawJson: String,
@@ -122,6 +133,7 @@ object AmapData {
         region: String,
         hopSec: Int,
         clocks: Map<String, Pair<Int, Int>>,
+        service: ServiceBands? = null,
     ): String {
         require(hits.isNotEmpty()) { "请先选择一条线路" }
         val hop = hopSec.coerceIn(20, 900)
@@ -144,7 +156,9 @@ object AmapData {
             o.put("stops", JSONArray().apply {
                 stops.forEach { put(JSONObject().put("name", it.name).put("lat", it.lat).put("lng", it.lng)) }
             })
-            serviceOf(busline(rawJson, h.amapId)?.optString("timedesc").orEmpty())?.let { o.put("service", it) }
+            val weekday = service?.weekday ?: h.weekdayBands
+            val weekend = service?.weekend ?: h.weekendBands
+            if (weekday.isNotEmpty() || weekend.isNotEmpty()) o.put("service", serviceJson(weekday, weekend))
             lines.put(o)
         }
         return JSONObject()
@@ -225,24 +239,30 @@ object AmapData {
         return null
     }
 
-    /** timedesc → {weekday:[{from,to,headwaySec}], weekend:[...]}；解析不出返回 null */
-    private fun serviceOf(timedesc: String): JSONObject? {
-        if (timedesc.isBlank()) return null
-        val decoded = runCatching { URLDecoder.decode(timedesc, "UTF-8") }.getOrNull() ?: return null
-        if (decoded.isBlank() || decoded == "\"\"") return null
-        val obj = runCatching { JSONObject(decoded) }.getOrNull() ?: return null
-        val groups = obj.optJSONArray("rule_group") ?: return null
-        val weekday = JSONArray()
-        val weekend = JSONArray()
+    /**
+     * 高德 timedesc → (工作日表, 周末表)。
+     *
+     * 实测结构：rule_group[].date.day_type 可能是 ["weekday"] / ["weekend"] /
+     * ["weekend","weekday"] / ["all"]；time_group[].start_time / end_time / interval_time
+     * 都是 HH:mm:ss。peak_time_group / low_time_group / flat_time_group 实测始终为空且
+     * 官方没有说明，暂不使用。解析失败或没有可用时段时返回两张空表。
+     */
+    fun parseTimedesc(timedesc: String): Pair<List<HeadwayBand>, List<HeadwayBand>> {
+        val empty = emptyList<HeadwayBand>()
+        if (timedesc.isBlank()) return empty to empty
+        val decoded = runCatching { URLDecoder.decode(timedesc, "UTF-8") }.getOrNull()
+        if (decoded.isNullOrBlank() || decoded == "\"\"") return empty to empty
+        val obj = runCatching { JSONObject(decoded) }.getOrNull() ?: return empty to empty
+        val groups = obj.optJSONArray("rule_group") ?: return empty to empty
+        val weekday = mutableListOf<HeadwayBand>()
+        val weekend = mutableListOf<HeadwayBand>()
         for (i in 0 until groups.length()) {
             val g = groups.optJSONObject(i) ?: continue
             val days = g.optJSONObject("date")?.optJSONArray("day_type") ?: continue
             val types = (0 until days.length()).map { days.optString(it) }
-            val target = when {
-                types.contains("weekday") -> weekday
-                types.contains("weekend") -> weekend
-                else -> null
-            } ?: continue
+            val toWeekday = types.contains("weekday") || types.contains("all")
+            val toWeekend = types.contains("weekend") || types.contains("all")
+            if (!toWeekday && !toWeekend) continue
             val tgs = g.optJSONArray("time_group") ?: continue
             for (j in 0 until tgs.length()) {
                 val tg = tgs.optJSONObject(j) ?: continue
@@ -250,13 +270,36 @@ object AmapData {
                 val to = clockSec(tg.optString("end_time")) ?: continue
                 val headway = clockSec(tg.optString("interval_time")) ?: continue
                 if (to <= from || headway !in 30..1800) continue
-                target.put(
-                    JSONObject().put("from", secToHhmm(from)).put("to", secToHhmm(to)).put("headwaySec", headway),
-                )
+                val band = HeadwayBand(from / 60, to / 60, headway)
+                if (toWeekday) weekday += band
+                if (toWeekend) weekend += band
             }
         }
-        if (weekday.length() == 0 && weekend.length() == 0) return null
-        return JSONObject().put("weekday", weekday).put("weekend", weekend)
+        return cleanBands(weekday) to cleanBands(weekend)
+    }
+
+    /** 去重、按开始时间排序，并限制最多 24 段 */
+    private fun cleanBands(bands: List<HeadwayBand>): List<HeadwayBand> =
+        bands.distinctBy { Triple(it.from, it.to, it.headwaySec) }.sortedBy { it.from }.take(24)
+
+    private fun bandsJson(bands: List<HeadwayBand>): JSONArray = JSONArray().apply {
+        bands.forEach { b ->
+            put(
+                JSONObject()
+                    .put("from", bandClock(b.from))
+                    .put("to", bandClock(b.to))
+                    .put("headwaySec", b.headwaySec),
+            )
+        }
+    }
+
+    private fun serviceJson(weekday: List<HeadwayBand>, weekend: List<HeadwayBand>): JSONObject =
+        JSONObject().put("weekday", bandsJson(weekday)).put("weekend", bandsJson(weekend))
+
+    /** 分时段边界允许 24:00（1440 分钟），其余按当天时间格式化 */
+    private fun bandClock(min: Int): String {
+        val m = if (min == 1440) 1440 else ((min % 1440) + 1440) % 1440
+        return "%02d:%02d".format(m / 60, m % 60)
     }
 
     private fun clockSec(raw: String): Int? {
@@ -282,8 +325,6 @@ object AmapData {
         val m = ((min % 1440) + 1440) % 1440
         return "%02d:%02d".format(m / 60, m % 60)
     }
-
-    private fun secToHhmm(sec: Int): String = minToHhmm(sec / 60)
 
     private fun hexOf(raw: String): String {
         val h = raw.trim().removePrefix("#").removePrefix("0x").removePrefix("0X")

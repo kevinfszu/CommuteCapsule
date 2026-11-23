@@ -175,12 +175,16 @@ object JsonTransit {
         return updated
     }
 
-    /** 修改同名全部方向记录的 hopSec；并按方向 id 覆盖始发站 first/last；返回新 JSON 文本 */
+    /**
+     * 修改同名全部方向记录的 hopSec；并按方向 id 覆盖始发站 first/last；返回新 JSON 文本。
+     * @param service 非空时替换同名全部方向的 service；两张表都为空则移除 service 字段
+     */
     fun updateLineParams(
         text: String,
         name: String,
         hopSec: Int,
         clocks: Map<String, Pair<Int, Int>>,
+        service: Pair<List<HeadwayBand>, List<HeadwayBand>>? = null,
     ): String {
         val root = runCatching { JSONObject(text) }
             .getOrElse { throw IllegalArgumentException("JSON 格式无效：${it.message ?: "解析失败"}") }
@@ -194,6 +198,10 @@ object JsonTransit {
                 o.put("first", minToClock(first))
                 o.put("last", minToClock(last))
             }
+            if (service != null) {
+                val sj = serviceJson(service.first, service.second)
+                if (sj == null) o.remove("service") else o.put("service", sj)
+            }
         }
         val updated = root.toString(2)
         parse(updated)
@@ -202,6 +210,28 @@ object JsonTransit {
 
     private fun minToClock(min: Int): String {
         val m = ((min % 1440) + 1440) % 1440
+        return "%02d:%02d".format(m / 60, m % 60)
+    }
+
+    private fun bandsJson(bands: List<HeadwayBand>): JSONArray = JSONArray().apply {
+        bands.forEach { b ->
+            put(
+                JSONObject()
+                    .put("from", bandClock(b.from))
+                    .put("to", bandClock(b.to))
+                    .put("headwaySec", b.headwaySec),
+            )
+        }
+    }
+
+    /** 两张表都为空时返回 null，表示移除 service 字段；分时段边界允许 24:00 */
+    private fun serviceJson(weekday: List<HeadwayBand>, weekend: List<HeadwayBand>): JSONObject? {
+        if (weekday.isEmpty() && weekend.isEmpty()) return null
+        return JSONObject().put("weekday", bandsJson(weekday)).put("weekend", bandsJson(weekend))
+    }
+
+    private fun bandClock(min: Int): String {
+        val m = if (min == 1440) 1440 else ((min % 1440) + 1440) % 1440
         return "%02d:%02d".format(m / 60, m % 60)
     }
 
@@ -448,12 +478,12 @@ object JsonTransit {
         return if (hex.length == 6 && hex.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) hex.uppercase() else ""
     }
 
-    /** service.weekday / service.weekend 的 band 数组，最多 8 段；非法段跳过 */
+    /** service.weekday / service.weekend 的 band 数组，最多 24 段；非法段跳过 */
     private fun parseService(o: JSONObject?): Pair<List<HeadwayBand>, List<HeadwayBand>> {
         if (o == null) return emptyList<HeadwayBand>() to emptyList()
         fun bands(name: String): List<HeadwayBand> {
             val arr = o.optJSONArray(name) ?: return emptyList()
-            return (0 until minOf(arr.length(), 8)).mapNotNull { i ->
+            return (0 until minOf(arr.length(), 24)).mapNotNull { i ->
                 val b = arr.optJSONObject(i) ?: return@mapNotNull null
                 val from = parseClockOrNull(b.optString("from")) ?: return@mapNotNull null
                 val to = parseClockOrNull(b.optString("to")) ?: return@mapNotNull null

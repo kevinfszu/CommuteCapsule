@@ -135,7 +135,7 @@ object Scheduler {
             return "$dayText %02d:%02d 起监测出发地".format(t.hour, t.minute)
         }
         val learned = ctx != null && Learn.learnedStart(ctx, plan, t.dayOfWeek.value) != null
-        return "$dayText %02d:%02d ${if (learned) "按习惯自动唤起" else "预热"}".format(t.hour, t.minute)
+        return "$dayText %02d:%02d ${if (learned) "按你的习惯自动盯着" else "开始盯这条线路"}".format(t.hour, t.minute)
     }
 
     private fun alarmIntent(ctx: Context, planId: String): PendingIntent =

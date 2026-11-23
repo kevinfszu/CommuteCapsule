@@ -46,6 +46,7 @@ object Learn {
                 "stop" -> dropToken(ctx, STOPS, p[1], p[2], last = true)
                 "bus" -> restoreFloat(ctx, BUS_SPEED, p[1], p[2], p.getOrNull(3))
                 "metro" -> restoreInt(ctx, METRO, p[1], p[2], p.getOrNull(3))
+                "clock" -> dropToken(ctx, BOARD_CLOCK, p[1], p[2], last = false)
                 "walk" -> if (p.size >= 4) p[3].toLongOrNull()?.let { WalkLearn.dropSample(ctx, p[1], p[2], it) }
             }
         }
@@ -179,11 +180,11 @@ object Learn {
         journalNote("ride$JSEP$k$JSEP$minutes")
     }
 
-    /** 攒够 3 次后用中位数，否则 null */
+    /** 第一次实测后就用中位数；样本越多越稳 */
     fun rideMin(ctx: Context, tripId: String, legIdx: Int): Int? {
         val l = (ctx.getSharedPreferences(RIDE, Context.MODE_PRIVATE).getString("$tripId#$legIdx", "") ?: "")
             .split(',').mapNotNull { it.trim().toIntOrNull() }
-        return if (l.size < 3) null else l.sorted()[l.size / 2]
+        return if (l.isEmpty()) null else l.sorted()[l.size / 2]
     }
 
     fun rideSamples(ctx: Context, tripId: String, legIdx: Int): Int =
@@ -263,11 +264,12 @@ object Learn {
     private const val NODES = "learn_nodes"
 
     enum class Metric(val minSamples: Int, val range: IntRange) {
-        WAIT(5, 0..1200),        // 进站 → 上车
-        TRANSFER(3, 0..1200),    // 下车 → 下一段上车
-        EXIT_WALK(5, 0..900),    // 下车 → 出站
-        LAST_WALK(3, 60..2400),  // 出站/下车 → 到达
-        REACT(3, 10..300),       // 首次提醒 → 确认下车
+        WAIT(1, 0..1200),        // 进站 → 上车
+        TRANSFER(1, 0..1200),    // 下车 → 下一段上车（含换乘步行 + 候车）
+        EXIT_WALK(1, 0..900),    // 下车 → 出站
+        LAST_WALK(1, 60..2400),  // 出站/下车 → 到达
+        REACT(1, 10..300),       // 首次提醒 → 确认下车
+        TRIP(1, 300..10800),     // 出发 → 到达（全程）
     }
 
     private fun nodeKey(m: Metric, scope: String) = "${m.name}:$scope"
@@ -314,6 +316,45 @@ object Learn {
 
     fun reactSec(ctx: Context, tripId: String, legIdx: Int) = nodeSec(ctx, Metric.REACT, "$tripId#$legIdx")
 
+    // ---------- 换乘站「几点上车」：只记人工确认 / 刷卡的换乘上车时刻，一天一条 ----------
+    private const val BOARD_CLOCK = "learn_board_clock"
+    private const val BOARD_CLOCK_MIN_SAMPLES = 2
+
+    private fun boardClockKey(tripId: String, legIdx: Int) = "$tripId#$legIdx"
+
+    private fun boardClockEntries(ctx: Context, tripId: String, legIdx: Int): List<Pair<Long, Int>> =
+        (ctx.getSharedPreferences(BOARD_CLOCK, Context.MODE_PRIVATE).getString(boardClockKey(tripId, legIdx), "") ?: "")
+            .split(',').mapNotNull { e ->
+                val (d, m) = e.split(':').takeIf { it.size == 2 } ?: return@mapNotNull null
+                val day = d.toLongOrNull() ?: return@mapNotNull null
+                val minute = m.toIntOrNull() ?: return@mapNotNull null
+                day to minute
+            }
+
+    /** 换乘站上车时刻（当天第几分钟）；同一天只留第一条 */
+    fun recordBoardClock(ctx: Context, tripId: String, legIdx: Int, at: Long) {
+        if (legIdx <= 0) return
+        val t = Instant.ofEpochMilli(at).atZone(ZoneId.systemDefault())
+        val day = t.toLocalDate().toEpochDay()
+        val minute = t.hour * 60 + t.minute
+        if (minute !in 0..1439) return
+        val list = boardClockEntries(ctx, tripId, legIdx)
+        if (list.any { it.first == day }) return
+        val out = (list + (day to minute)).takeLast(KEEP)
+        ctx.getSharedPreferences(BOARD_CLOCK, Context.MODE_PRIVATE).edit()
+            .putString(boardClockKey(tripId, legIdx), out.joinToString(",") { "${it.first}:${it.second}" }).apply()
+        journalNote("clock$JSEP${boardClockKey(tripId, legIdx)}$JSEP$day:$minute")
+    }
+
+    /** 这个换乘站通常几点上车（中位数）；样本不足返回 null */
+    fun boardClock(ctx: Context, tripId: String, legIdx: Int): Int? {
+        val l = boardClockEntries(ctx, tripId, legIdx).map { it.second }
+        return if (l.size < BOARD_CLOCK_MIN_SAMPLES) null else l.sorted()[l.size / 2]
+    }
+
+    fun boardClockStat(ctx: Context, tripId: String, legIdx: Int): Stat =
+        Stat(boardClockEntries(ctx, tripId, legIdx).map { it.second }, BOARD_CLOCK_MIN_SAMPLES)
+
     /** T-1 提前量：按个人反应时长，夹在 60–240 秒；样本不足用 90 秒 */
     fun alertLeadMs(ctx: Context, tripId: String, legIdx: Int): Long =
         ((reactSec(ctx, tripId, legIdx) ?: 90).coerceIn(60, 240)) * 1000L
@@ -329,7 +370,7 @@ object Learn {
     private fun stopSamples(p: android.content.SharedPreferences, k: String): List<Int> =
         (p.getString(k, "") ?: "").split(',').mapNotNull { it.trim().toIntOrNull() }.filter { it > 0 }
 
-    private fun stopMedian(l: List<Int>): Int? = if (l.size < 2) null else l.sorted()[l.size / 2]
+    private fun stopMedian(l: List<Int>): Int? = if (l.isEmpty()) null else l.sorted()[l.size / 2]
 
     /**
      * 一次乘车结束（下车 / 结束行程）时落库。marks 是撤销之后仍保留的打卡；
@@ -370,7 +411,7 @@ object Learn {
         edit.apply()
     }
 
-    /** 这条线（含方向/终点站）学到的每站秒数；至少 2 个样本 */
+    /** 这条线（含方向/终点站）学到的每站秒数；至少 1 个样本 */
     fun stopPerHopSec(ctx: Context, lineKey: String): Int? {
         if (lineKey.isEmpty()) return null
         return stopMedian(stopSamples(ctx.getSharedPreferences(STOPS, Context.MODE_PRIVATE), "$STOP_AVG$lineKey"))
@@ -410,7 +451,7 @@ object Learn {
     fun rideStat(ctx: Context, tripId: String, legIdx: Int): Stat {
         val values = (ctx.getSharedPreferences(RIDE, Context.MODE_PRIVATE).getString("$tripId#$legIdx", "") ?: "")
             .split(',').mapNotNull { it.trim().toIntOrNull() }
-        return Stat(values, 3)
+        return Stat(values, 1)
     }
 
     fun nodeStat(ctx: Context, m: Metric, scope: String): Stat =
@@ -439,8 +480,8 @@ object Learn {
         return (avgs.keys + pairs.keys).distinct().sorted().map { line ->
             StopLineStat(
                 lineKey = line,
-                perHop = Stat(avgs[line].orEmpty(), 2),
-                pairs = pairs[line].orEmpty().map { (k, v) -> k to Stat(v, 2) },
+                perHop = Stat(avgs[line].orEmpty(), 1),
+                pairs = pairs[line].orEmpty().map { (k, v) -> k to Stat(v, 1) },
             )
         }
     }

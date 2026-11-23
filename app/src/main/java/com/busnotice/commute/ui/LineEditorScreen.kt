@@ -9,17 +9,22 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.busnotice.commute.HeadwayBand
 import com.busnotice.commute.ImportedJsonSource
 import com.busnotice.commute.JsonTransit
 import com.busnotice.commute.Transit
@@ -41,6 +46,15 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
     var clocks by remember {
         mutableStateOf(dirs.associate { it.id to (hhmm(it.firstMin) to hhmm(it.lastMin)) })
     }
+    val initialBands = dirs.firstOrNull { it.weekdayBands.isNotEmpty() || it.weekendBands.isNotEmpty() }
+    val initialWeekendSame = initialBands == null || initialBands.weekendBands.isEmpty()
+    var weekdayBands by remember { mutableStateOf(initialBands?.weekdayBands.orEmpty()) }
+    var weekendSame by remember { mutableStateOf(initialWeekendSame) }
+    var weekendBands by remember {
+        mutableStateOf(
+            if (initialWeekendSame) initialBands?.weekdayBands.orEmpty() else initialBands!!.weekendBands,
+        )
+    }
 
     fun save() {
         error = null
@@ -59,7 +73,24 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
             }
             clockMin[id] = from to to
         }
-        runCatching { Transit.updateImportedLine(ctx, lineName, total, clockMin) }
+        val (wdParsed, wdError) = checkBands(weekdayBands)
+        if (wdError != null) {
+            error = "工作日发车间隔：$wdError"
+            return
+        }
+        val wd = wdParsed.orEmpty()
+        val (weParsed, weError) = if (weekendSame) {
+            emptyList<HeadwayBand>() to null
+        } else {
+            checkBands(weekendBands)
+        }
+        if (weError != null) {
+            error = "周末发车间隔：$weError"
+            return
+        }
+        val we = weParsed.orEmpty()
+        val service = if (wd.isEmpty() && we.isEmpty()) null else wd to we
+        runCatching { Transit.updateImportedLine(ctx, lineName, total, clockMin, service) }
             .onSuccess {
                 Toast.makeText(ctx, "已保存「$lineName」", Toast.LENGTH_SHORT).show()
                 onBack()
@@ -174,6 +205,68 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                         )
                     }
                 }
+            }
+        }
+        item {
+            GlassCard {
+                SectionLabel("发车间隔")
+                Text(
+                    if (weekdayBands.isEmpty()) {
+                        "当前没有分时段间隔，可添加；不添加时行程会按默认高峰/平峰推算。"
+                    } else {
+                        "按工作日/周末分时段，修改后行程会按新间隔推算。"
+                    },
+                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Text(
+                    "工作日",
+                    fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ink,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                HeadwayBandsEditor(
+                    bands = weekdayBands,
+                    onChange = { weekdayBands = it },
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("周末与工作日相同", fontSize = 14.sp, color = ink, modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = weekendSame,
+                        onCheckedChange = { on ->
+                            if (on) {
+                                weekendSame = true
+                            } else {
+                                if (weekendBands.isEmpty()) weekendBands = weekdayBands
+                                weekendSame = false
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Fuse.onAccent(dark),
+                            checkedTrackColor = Fuse.accent(dark),
+                            uncheckedThumbColor = dim,
+                            uncheckedTrackColor = ink.copy(alpha = 0.12f),
+                        ),
+                    )
+                }
+                if (!weekendSame) {
+                    Text(
+                        "周末",
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ink,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    HeadwayBandsEditor(
+                        bands = weekendBands,
+                        onChange = { weekendBands = it },
+                    )
+                }
+                Text(
+                    "同一线路两个方向共用这份发车间隔；修改后请结束并重新开始行程。",
+                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
             }
         }
         item {
