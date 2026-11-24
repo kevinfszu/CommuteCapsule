@@ -173,6 +173,93 @@ object AmapData {
             .toString(2)
     }
 
+    // ---------- 选点（输入提示 / 周边 / 逆地理 / 静态地图） ----------
+
+    /** 高德选点结果：坐标已转成 WGS-84 */
+    data class PlacePoint(
+        val name: String,
+        val address: String,
+        val lat: Double,
+        val lng: Double,
+        val distanceM: Int? = null,
+    )
+
+    private const val AMAP = "https://restapi.amap.com/v3"
+
+    fun inputTipsUrl(key: String, city: String, keywords: String, lat: Double?, lng: Double?): String {
+        val base = "$AMAP/assistant/inputtips?key=${enc(key.trim())}&keywords=${enc(keywords.trim())}" +
+            "&city=${enc(city.trim())}&citylimit=false&output=json"
+        if (lat == null || lng == null) return base
+        val (glat, glng) = wgsToGcj(lat, lng)
+        return "$base&location=${"%.6f".format(glng)},${"%.6f".format(glat)}"
+    }
+
+    fun aroundUrl(key: String, lat: Double, lng: Double, radiusM: Int = 1200): String {
+        val (glat, glng) = wgsToGcj(lat, lng)
+        return "$AMAP/place/around?key=${enc(key.trim())}&location=${"%.6f".format(glng)},${"%.6f".format(glat)}" +
+            "&radius=$radiusM&types=${enc("商务住宅|公司企业|地名地址信息|交通设施服务")}" +
+            "&offset=20&page=1&extensions=base&output=json"
+    }
+
+    fun regeoUrl(key: String, lat: Double, lng: Double): String {
+        val (glat, glng) = wgsToGcj(lat, lng)
+        return "$AMAP/geocode/regeo?key=${enc(key.trim())}&location=${"%.6f".format(glng)},${"%.6f".format(glat)}" +
+            "&extensions=base&output=json"
+    }
+
+    /** 静态地图：直接返回图片字节，不能拖动，只做预览 */
+    fun staticMapUrl(key: String, lat: Double, lng: Double, w: Int = 640, h: Int = 320, zoom: Int = 16): String {
+        val (glat, glng) = wgsToGcj(lat, lng)
+        val p = "${"%.6f".format(glng)},${"%.6f".format(glat)}"
+        return "$AMAP/staticmap?key=${enc(key.trim())}&location=$p&zoom=$zoom&size=${w}*${h}" +
+            "&markers=${enc("mid,0xE4572E,A:$p")}"
+    }
+
+    /** 输入提示：没有坐标的条目（公交线路、纯文本提示）跳过；错误返回空表 */
+    fun parseTips(json: String): List<PlacePoint> = parsePois(json, "tips")
+
+    /** 周边地点：错误返回空表 */
+    fun parseAround(json: String): List<PlacePoint> = parsePois(json, "pois")
+
+    private fun parsePois(json: String, field: String): List<PlacePoint> {
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return emptyList()
+        if (root.optString("status") != "1") return emptyList()
+        val arr = root.optJSONArray(field) ?: return emptyList()
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            val loc = o.optString("location").trim().split(',')
+            if (loc.size != 2) return@mapNotNull null
+            val lng = loc[0].trim().toDoubleOrNull() ?: return@mapNotNull null
+            val lat = loc[1].trim().toDoubleOrNull() ?: return@mapNotNull null
+            val (wLat, wLng) = gcjToWgs(lat, lng)
+            val name = o.optString("name").trim().ifEmpty { o.optString("district").trim() }
+            PlacePoint(
+                name = name,
+                address = textOf(o.opt("address")).trim(),
+                lat = wLat,
+                lng = wLng,
+                distanceM = o.optString("distance").trim().toIntOrNull(),
+            )
+        }
+    }
+
+    /** 逆地理：取 formatted_address 当名称；坐标用请求坐标（已是 WGS-84） */
+    fun parseRegeo(json: String, lat: Double = Double.NaN, lng: Double = Double.NaN): PlacePoint? {
+        val root = runCatching { JSONObject(json) }.getOrNull() ?: return null
+        if (root.optString("status") != "1") return null
+        val re = root.optJSONObject("regeocode") ?: return null
+        val addr = textOf(re.opt("formatted_address")).trim()
+        if (addr.isEmpty()) return null
+        return PlacePoint(name = addr, address = "", lat = lat, lng = lng)
+    }
+
+    /** 字符串或字符串数组 → 文本（高德的 address 两种都可能） */
+    private fun textOf(v: Any?): String = when (v) {
+        is JSONArray -> (0 until v.length()).joinToString("") { v.optString(it) }
+        is String -> v
+        else -> ""
+    }
+
     // ---------- 坐标 ----------
 
     private const val A = 6378245.0

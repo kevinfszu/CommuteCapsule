@@ -1,7 +1,9 @@
 package com.busnotice.commute
 
-/** 一次到站打卡：idx = 本段站点下标（0 = 上车站），at = 毫秒时间戳 */
-data class StopMark(val idx: Int, val at: Long)
+/**
+ * 一次到站打卡：leg = 行程段下标（-1 为旧数据），idx = 本段站点下标（0 = 上车站），at = 毫秒时间戳
+ */
+data class StopMark(val idx: Int, val at: Long, val leg: Int = -1)
 
 /**
  * 到站打卡的纯逻辑（不依赖 Context，方便单元测试）。
@@ -60,6 +62,40 @@ object RideStops {
             }
             prevIdx = m.idx; prevAt = m.at
         }
+        return out
+    }
+}
+
+/**
+ * 站序合并：把多次乘车记录的站点序列（以及已知区间的 from→to 边）拼成一条行车方向的站序。
+ * 只依赖序列本身，不依赖数据源；冲突边保留先出现的一条，环路不会死循环。
+ */
+object StopOrder {
+    fun merge(sequences: List<List<String>>): List<String> {
+        val next = LinkedHashMap<String, String>()
+        val all = LinkedHashSet<String>()
+        sequences.forEach { seq ->
+            seq.filter { it.isNotBlank() }.forEach { all += it }
+            seq.zipWithNext().forEach { (a, b) ->
+                if (a.isNotBlank() && b.isNotBlank() && a != b) next.putIfAbsent(a, b)
+            }
+        }
+        if (all.isEmpty()) return emptyList()
+
+        val hasPrev = next.values.toHashSet()
+        val out = ArrayList<String>(all.size)
+        val used = HashSet<String>()
+
+        fun walk(start: String) {
+            var cur: String? = start
+            while (cur != null && used.add(cur)) {
+                out += cur
+                cur = next[cur]
+            }
+        }
+
+        all.filter { it !in hasPrev }.forEach { walk(it) }
+        all.forEach { if (it !in used) walk(it) }   // 剩下的多是环路/断开片段，按出现顺序补齐
         return out
     }
 }

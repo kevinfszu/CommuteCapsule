@@ -1,6 +1,5 @@
 package com.busnotice.commute.ui
 
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -15,6 +14,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -60,6 +60,8 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
+    // 生成结果用页内 Snackbar
+    val snack = remember { SnackbarHostState() }
     val ink = Fuse.ink(dark)
     val dim = Fuse.dim(dark)
     val listState = rememberLazyListState()
@@ -176,7 +178,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
             result.onSuccess {
                 Transit.setAmapKey(ctx, key)
                 Transit.setAmapCity(ctx, city)
-                Toast.makeText(ctx, "已生成，当前共 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG).show()
+                scope.launch { snack.showSnackbar("已生成，当前共 ${it.lineCount} 条线路、${it.stationCount} 个站点") }
                 onDone()
             }.onFailure { fail(it.message ?: "生成失败") }
         }
@@ -188,6 +190,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
         title = "用高德生成",
         onBack = { if (!generating) onBack() },
         state = listState,
+        snackbar = snack,
         bottomBar = {
             PillButton(
                 onClick = { generate() },
@@ -200,12 +203,12 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
             GlassCard {
                 Text(
                     "使用高德「公交信息查询 API」：需先注册为高德开发者，并在控制台创建「Web 服务」类型的 Key。",
-                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                    style = Type.Caption, color = dim,
                 )
                 error?.let { msg ->
                     Text(
                         msg,
-                        fontSize = 13.sp, lineHeight = 18.sp, color = Fuse.MetroRed,
+                        style = Type.BodyDim, color = Fuse.MetroRed,
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Fuse.MetroRed.copy(alpha = 0.10f))
@@ -277,13 +280,12 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                                     Column(Modifier.weight(1f)) {
                                         Text(
                                             h.name + (if (h.dirLabel.isNotEmpty()) " ${h.dirLabel}" else " · 开往 ${h.toStop}"),
-                                            fontSize = 15.sp,
-                                            fontWeight = if (on) FontWeight.Bold else FontWeight.Normal,
+                                            style = Type.ItemTitle,
                                             color = ink,
                                         )
                                         Text(
                                             "${h.stopCount} 站 · ${hm(h.firstMin)}–${hm(h.lastMin)}",
-                                            fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 2.dp),
+                                            style = Type.Caption, color = dim, modifier = Modifier.padding(top = 2.dp),
                                         )
                                     }
                                 }
@@ -300,7 +302,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                     Text(
                         "已选 ${keepStops.size}/${stops.size} 站" +
                             if (keepStops.size < 2) " · 至少保留 2 站" else "",
-                        fontSize = 12.sp, color = if (keepStops.size < 2) Fuse.MetroRed else dim,
+                        style = Type.Caption, color = if (keepStops.size < 2) Fuse.MetroRed else dim,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                     Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
@@ -319,7 +321,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                                         checkmarkColor = Fuse.onAccent(dark),
                                     ),
                                 )
-                                Text(s.name, fontSize = 14.sp, color = ink)
+                                Text(s.name, style = Type.Body, color = ink)
                             }
                         }
                     }
@@ -342,7 +344,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                             label = "秒", modifier = Modifier.weight(1f),
                         )
                     }
-                    Text("影响站点首末班与到站推算，20–900 秒", fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 4.dp))
+                    Text("影响站点首末班与到站推算，20–900 秒", style = Type.Caption, color = dim, modifier = Modifier.padding(top = 4.dp))
 
                     SectionLabel("发车间隔", Modifier.padding(top = 12.dp))
                     Text(
@@ -351,7 +353,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                         } else {
                             "来自高德 timedesc，可修改各段起止时间与间隔。"
                         },
-                        fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                        style = Type.Caption, color = dim,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                     Text("工作日", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = ink,
@@ -365,7 +367,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                         Modifier.fillMaxWidth().padding(top = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("周末与工作日相同", fontSize = 14.sp, color = ink, modifier = Modifier.weight(1f))
+                        Text("周末与工作日相同", style = Type.Body, color = ink, modifier = Modifier.weight(1f))
                         Switch(
                             checked = weekendSame,
                             onCheckedChange = { on ->
@@ -400,7 +402,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
                         val v = clocks[d.amapId] ?: (hm(d.firstMin) to hm(d.lastMin))
                         Text(
                             "开往 ${d.toStop}" + (if (d.dirLabel.isNotEmpty()) "（${d.dirLabel}）" else ""),
-                            fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 6.dp),
+                            style = Type.Caption, color = dim, modifier = Modifier.padding(top = 6.dp),
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
                             GlassField(
@@ -419,7 +421,7 @@ fun AmapImportScreen(onBack: () -> Unit, onDone: () -> Unit) {
         item {
             Text(
                 "生成后会合并到已导入的数据里，同名线路（两个方向）被覆盖。",
-                fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                style = Type.Caption, color = dim,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         }

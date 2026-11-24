@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -97,7 +96,7 @@ private fun LazyListScope.loading() = item {
 
 private fun LazyListScope.hint(text: String) = item {
     val dark = isSystemInDarkTheme()
-    Text(text, fontSize = 14.sp, color = Fuse.dim(dark), modifier = Modifier.padding(horizontal = 6.dp, vertical = 12.dp))
+    Text(text, style = Type.Body, color = Fuse.dim(dark), modifier = Modifier.padding(horizontal = 6.dp, vertical = 12.dp))
 }
 
 /** 搜索结果、站点列表左边的定位小图标 */
@@ -117,7 +116,7 @@ private fun BadgeStrip(names: List<String>, max: Int = 6) {
     val dark = isSystemInDarkTheme()
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
         names.take(max).forEach { NameBadge(it) }
-        if (names.size > max) Text("+${names.size - max}", fontSize = 12.sp, color = Fuse.dim(dark))
+        if (names.size > max) Text("+${names.size - max}", style = Type.Caption, color = Fuse.dim(dark))
     }
 }
 
@@ -128,7 +127,7 @@ private fun OrderDot(n: Int) {
     Box(
         Modifier.size(28.dp).clip(CircleShape).background(Fuse.hairline(dark)),
         contentAlignment = Alignment.Center,
-    ) { Text("$n", fontSize = 12.sp, color = Fuse.dim(dark), style = TnumStyle) }
+    ) { Text("$n", style = Type.Caption, color = Fuse.dim(dark)) }
 }
 
 private fun distText(m: Int) = if (m >= 1000) "%.1f 公里".format(m / 1000.0) else "$m 米"
@@ -272,7 +271,7 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                             GlassRow(
                                 headline = st.name,
                                 supportingContent = { BadgeStrip(group.flatMap { it.lines }.map { it.name }.distinct().take(8)) },
-                                trailing = { Text(distText(group.minOf { it.distanceM }), fontSize = 13.sp, color = Fuse.dim(isSystemInDarkTheme())) },
+                                trailing = { Text(distText(group.minOf { it.distanceM }), style = Type.BodyDim, color = Fuse.dim(isSystemInDarkTheme())) },
                                 leading = { PinIcon() },
                                 onClick = { stage = BusStage.Station(st.name, st.siteId, st.sameNameId, group) },
                             )
@@ -413,10 +412,10 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                             NameBadge(s.detail.name)
                             Spacer(Modifier.width(10.dp))
                             Text("${lineText(s.detail.name)} · ${s.board.name} 上车 · 开往 ${s.detail.lastStop}",
-                                fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark))
+                                style = Type.ItemTitle, color = Fuse.ink(dark))
                         }
                         Spacer(Modifier.height(6.dp))
-                        Text("选择下车站后可估算乘车时长并生成回程，也可跳过", fontSize = 12.sp, color = Fuse.dim(dark))
+                        Text("选择下车站后可估算乘车时长并生成回程，也可跳过", style = Type.Caption, color = Fuse.dim(dark))
                         Spacer(Modifier.height(10.dp))
                         PillButton(secondary = true, onClick = { finish(s.detail, s.board, null, 0) }) { Text("跳过") }
                     }
@@ -448,9 +447,9 @@ fun BusPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 NameBadge(s.detail.name)
                                 Spacer(Modifier.width(10.dp))
                                 Text("${lineText(s.detail.name)} · ${s.board.name} → ${s.alight.name}",
-                                    fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark))
+                                    style = Type.ItemTitle, color = Fuse.ink(dark))
                             }
-                            Text("相隔 $hops 站 · 约 $est 分钟（已自动填入，可调整）", fontSize = 13.sp, color = Fuse.dim(dark))
+                            Text("相隔 $hops 站 · 约 $est 分钟（已自动填入，可调整）", style = Type.BodyDim, color = Fuse.dim(dark))
                             Stepper("预计乘车时长", s.rideMin, 1, 120) { stage = s.copy(rideMin = it) }
                             PillButton(
                                 onClick = { finish(s.detail, s.board, s.alight, s.rideMin) },
@@ -605,8 +604,8 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 NameBadge(s.line.name)
                                 Spacer(Modifier.width(10.dp))
-                                Text("${lineText(s.line.name)} · ${s.stop.name} 上车", fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold, color = Fuse.ink(dark))
+                                Text("${lineText(s.line.name)} · ${s.stop.name} 上车", style = Type.ItemTitle,
+                                    color = Fuse.ink(dark))
                             }
                             if (lineDirs.isNotEmpty()) {
                                 SectionLabel("方向")
@@ -622,40 +621,40 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 }
                                 Text("本站首末班：" + lineDirs.joinToString("，") {
                                     "往${it.dest} ${hhmm(it.firstMin.coerceAtLeast(0))}–${hhmm(it.lastMin.coerceAtLeast(0))}"
-                                }, fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
+                                }, style = Type.Caption, color = Fuse.dim(dark))
                                 if (bands.isNotEmpty()) {
                                     SectionLabel("发车间隔")
                                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text("工作日", fontSize = 12.sp, color = Fuse.dim(dark))
+                                        Text("工作日", style = Type.Caption, color = Fuse.dim(dark))
                                         bands.forEach { Text("${hhmm(it.from)}–${hhmm(it.to)}　每 ${secText(it.headwaySec)}",
-                                            fontSize = 13.sp, color = Fuse.ink(dark)) }
-                                        Text("周末", fontSize = 12.sp, color = Fuse.dim(dark),
+                                            style = Type.BodyDim, color = Fuse.ink(dark)) }
+                                        Text("周末", style = Type.Caption, color = Fuse.dim(dark),
                                             modifier = Modifier.padding(top = 4.dp))
                                         weekendBands.forEach { Text("${hhmm(it.from)}–${hhmm(it.to)}　每 ${secText(it.headwaySec)}",
-                                            fontSize = 13.sp, color = Fuse.ink(dark)) }
+                                            style = Type.BodyDim, color = Fuse.ink(dark)) }
                                     }
                                     Text("时段来自线路数据，添加后可在「编辑」中逐段调整发车间隔。",
-                                        fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
+                                        style = Type.Caption, color = Fuse.dim(dark))
                                 } else {
                                     HeadwayStepper("高峰间隔", headway) { headway = it }
                                     HeadwayStepper("平峰间隔", offPeak) { offPeak = it }
                                 }
                                 Text("数据源不含地铁实时位置，按本站首班时间与发车间隔推算，间隔精确至秒。",
-                                    fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
+                                    style = Type.Caption, color = Fuse.dim(dark))
                             } else {
                                 Text("线路数据缺少 ${s.line.name} 在本站的首末班与发车间隔，请手动填写。",
-                                    fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark))
+                                    style = Type.Caption, color = Fuse.dim(dark))
                                 HeadwayStepper("高峰间隔", headway) { headway = it }
                                 HeadwayStepper("平峰间隔", offPeak) { offPeak = it }
                             }
                             SectionLabel("下车站")
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(s.alight?.name ?: "未选择", fontSize = 15.sp, color = Fuse.ink(dark))
+                                    Text(s.alight?.name ?: "未选择", style = Type.Body, color = Fuse.ink(dark))
                                     Text(
                                         if (s.alight != null) "相隔 ${s.hops} 站，时长已按站数估算，可调整"
                                         else "可选，用于到站提醒、回程生成与乘车时长估算",
-                                        fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.dim(dark),
+                                        style = Type.Caption, color = Fuse.dim(dark),
                                     )
                                 }
                                 PillButton(secondary = true, onClick = {
@@ -728,12 +727,12 @@ fun MetroPicker(onBack: () -> Unit, onPicked: (Candidate, Int) -> Unit) {
                                 Text(
                                     "${lineText(s.back.line.name)} · ${s.back.stop.name} 上车" +
                                         if (s.dirDest.isNotEmpty()) " · 开往 ${s.dirDest}" else "",
-                                    fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark),
+                                    style = Type.ItemTitle, color = Fuse.ink(dark),
                                 )
                             }
                             Spacer(Modifier.height(6.dp))
                             Text("选择下车站后可估算乘车时长并生成回程，也可跳过",
-                                fontSize = 12.sp, color = Fuse.dim(dark))
+                                style = Type.Caption, color = Fuse.dim(dark))
                             Spacer(Modifier.height(10.dp))
                             PillButton(secondary = true, onClick = { stage = s.back }) { Text("跳过") }
                         }
@@ -826,7 +825,7 @@ fun ShuttleEditor(initial: Candidate?, onBack: () -> Unit, onDone: (Candidate) -
                 SectionLabel("上车点")
                 Text(
                     if (lat != null && stopName.isNotEmpty()) "已选：$stopName" else if (lat != null) "已使用当前位置" else "未选择",
-                    fontSize = 15.sp, color = Fuse.ink(dark),
+                    style = Type.Body, color = Fuse.ink(dark),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     PillButton(secondary = true, onClick = {

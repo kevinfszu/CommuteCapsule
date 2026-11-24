@@ -204,13 +204,20 @@ data class Trip(
     val leaveLat: Double = Double.NaN,
     val leaveLng: Double = Double.NaN,
     val leaveRadiusM: Int = 0,
-    // 出发地名称：优先「家 / 公司」，其次反查到的地址；仅用于展示
+    // 出发地名称：高德选点或反查地址；仅用于展示
     val leaveName: String = "",
+    // 目的地：高德选点得到的 WGS-84 坐标与名称；没设置时坐标 NaN、名称为空
+    val destLat: Double = Double.NaN,
+    val destLng: Double = Double.NaN,
+    val destName: String = "",
     // 没人工打卡时的预估：地铁上车 = 进站 + n 秒；终点下车 = 出站 - n 秒
     val boardEstimateSec: Int = 180,
     val alightEstimateSec: Int = 120,
 ) {
     fun leaveMode() = leaveRadiusM > 0 && !leaveLat.isNaN() && !leaveLng.isNaN()
+
+    /** 有没有设置目的地（高德选点） */
+    fun destMode() = !destLat.isNaN() && !destLng.isNaN()
 
     /** 这一天这趟行程要不要跑 */
     fun runsOn(date: LocalDate, isStatutoryWorkday: (LocalDate) -> Boolean): Boolean =
@@ -239,8 +246,10 @@ data class Trip(
         .put("startMinute", startMinute).put("endMinute", endMinute)
         .put("warmupMin", warmupMin).put("enabled", enabled)
         .put("leaveRadiusM", leaveRadiusM).put("leaveName", leaveName)
+        .put("destName", destName)
         .put("boardEstimateSec", boardEstimateSec).put("alightEstimateSec", alightEstimateSec)
         .apply { if (!leaveLat.isNaN() && !leaveLng.isNaN()) put("leaveLat", leaveLat).put("leaveLng", leaveLng) }
+        .apply { if (destMode()) put("destLat", destLat).put("destLng", destLng) }
 
     companion object {
         fun fromJson(o: JSONObject): Trip {
@@ -254,6 +263,8 @@ data class Trip(
                 warmupMin = o.optInt("warmupMin", 10), enabled = o.optBoolean("enabled", true),
                 leaveLat = o.optDouble("leaveLat"), leaveLng = o.optDouble("leaveLng"),
                 leaveRadiusM = o.optInt("leaveRadiusM", 0), leaveName = o.optString("leaveName", ""),
+                destLat = o.optDouble("destLat"), destLng = o.optDouble("destLng"),
+                destName = o.optString("destName", ""),
                 boardEstimateSec = o.optInt("boardEstimateSec", 180).coerceIn(0, 1800),
                 alightEstimateSec = o.optInt("alightEstimateSec", 120).coerceIn(0, 1800),
             )

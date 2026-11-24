@@ -13,10 +13,20 @@ object Reverse {
             val walk = if (j == 0) leg.transferWalkMin else src.legs[n - j].transferWalkMin
             Leg(cands, rideMin = leg.rideMin, rideMinManual = leg.rideMinManual, transferWalkMin = walk)
         }.filter { it.candidates.isNotEmpty() }
+        // 起终点互换：去程的目的地 = 回程的出发地，去程的出发地 = 回程的目的地
+        val destSet = src.destMode()
+        val leaveSet = !src.leaveLat.isNaN() && !src.leaveLng.isNaN()
         val trip = Trip(
             name = if (src.name.contains("上班")) "下班" else src.name + "·回程",
             legs = legs, dayMask = src.dayMask, chinaWorkday = src.chinaWorkday,
-            startMinute = 18 * 60, endMinute = 18 * 60 + 30, warmupMin = src.warmupMin,
+            startMinute = 17 * 60 + 30, endMinute = 18 * 60 + 30, warmupMin = src.warmupMin,
+            leaveLat = if (destSet) src.destLat else Double.NaN,
+            leaveLng = if (destSet) src.destLng else Double.NaN,
+            leaveName = if (destSet) src.destName else "",
+            leaveRadiusM = src.leaveRadiusM,
+            destLat = if (leaveSet) src.leaveLat else Double.NaN,
+            destLng = if (leaveSet) src.leaveLng else Double.NaN,
+            destName = if (leaveSet) src.leaveName else "",
         )
         return Result(trip, warnings)
     }

@@ -27,7 +27,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -45,7 +44,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.key
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
@@ -62,14 +60,11 @@ import com.busnotice.commute.MetroRoute
 import com.busnotice.commute.SubwayDir
 import com.busnotice.commute.Learn
 import com.busnotice.commute.MetroRoutes
-import com.busnotice.commute.Loc
 import com.busnotice.commute.Geocode
-import com.busnotice.commute.Places
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.LaunchedEffect
 import com.busnotice.commute.R
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -109,27 +104,9 @@ fun TripEditor(
 ) {
     val ctx = LocalContext.current
     var pickTime by remember { mutableStateOf<Int?>(null) } // 0=开始 1=结束
-    var locating by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
+    var pickFor by remember { mutableStateOf<Int?>(null) }  // 0=出发地 1=目的地
 
     fun updateLeg(i: Int, leg: Leg) = onChange(trip.copy(legs = trip.legs.toMutableList().also { it[i] = leg }))
-
-    // 定位 + 反查地址：家/公司优先，其次街道名，都拿不到就只存坐标
-    fun locate(radius: Int) {
-        if (locating) return
-        locating = true
-        scope.launch {
-            val l = Loc.current(ctx)
-            if (l == null) {
-                locating = false
-                Toast.makeText(ctx, "定位失败，请到达出发地后重试", Toast.LENGTH_SHORT).show()
-                return@launch
-            }
-            val name = Places.nearestLabel(ctx, l.latitude, l.longitude) ?: Geocode.nameOf(ctx, l.latitude, l.longitude)
-            locating = false
-            onChange(trip.copy(leaveLat = l.latitude, leaveLng = l.longitude, leaveRadiusM = radius, leaveName = name.orEmpty()))
-        }
-    }
 
     // 老数据只有坐标没有名称：进入页面时反查一次，仅用于展示（不改草稿，保存时才落库）
     var leaveAddr by remember { mutableStateOf("") }
@@ -170,24 +147,6 @@ fun TripEditor(
                 )
             }
             item {
-                Section("通勤时间范围") {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TimeBox(hhmm(trip.startMinute), dark) { pickTime = 0 }
-                        Text("至", color = dim, modifier = Modifier.padding(horizontal = 12.dp))
-                        TimeBox(hhmm(trip.endMinute), dark) { pickTime = 1 }
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Text("定位预热提前量", fontSize = 14.sp, color = dim)
-                    Spacer(Modifier.height(6.dp))
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(5, 10, 15, 20).forEach { m ->
-                            GlassChip(selected = trip.warmupMin == m, onClick = { onChange(trip.copy(warmupMin = m)) },
-                                label = "$m 分钟")
-                        }
-                    }
-                }
-            }
-            item {
                 Section("生效日期") {
                     // 两种重复方式互斥：默认值（法定工作日）排第一，再选具体日期
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -216,48 +175,20 @@ fun TripEditor(
             item {
                 Section("胶囊唤起方式") {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        GlassChip(selected = !trip.leaveMode(), onClick = { onChange(trip.copy(leaveRadiusM = 0)) },
+                        GlassChip(selected = trip.leaveRadiusM <= 0, onClick = { onChange(trip.copy(leaveRadiusM = 0)) },
                             label = "按时间唤起")
-                        GlassChip(selected = trip.leaveMode(), onClick = {
-                            if (!trip.leaveLat.isNaN()) onChange(trip.copy(leaveRadiusM = trip.leaveRadiusM.takeIf { it > 0 } ?: 300))
-                            else locate(300)
-                        }, label = if (locating) "定位中…" else "离开出发地后唤起")
+                        GlassChip(selected = trip.leaveRadiusM > 0, onClick = {
+                            onChange(trip.copy(leaveRadiusM = trip.leaveRadiusM.takeIf { it > 0 } ?: 300))
+                        }, label = "离开出发地后唤起")
                     }
                     Spacer(Modifier.height(8.dp))
-                    if (trip.leaveMode()) {
+                    if (trip.leaveRadiusM > 0) {
                         Text("时间范围内每 2 分钟进行一次粗略定位，离开设定范围后自动唤起。适用于下班时间不固定的情况，可将时间范围放宽，例如 17:30 至 22:00。",
                             fontSize = 12.sp, lineHeight = 17.sp, color = dim)
-                        Spacer(Modifier.height(10.dp))
-                        val main = trip.leaveName.ifEmpty { leaveAddr.ifEmpty { "已设置" } }
-                        val sub = if (trip.leaveName == "家" || trip.leaveName == "公司")
-                            listOfNotNull(leaveAddr.takeIf { it.isNotEmpty() }, "触发半径 ${trip.leaveRadiusM} 米").joinToString(" · ")
-                        else "触发半径 ${trip.leaveRadiusM} 米"
-                        Row(
-                            Modifier.fillMaxWidth().clip(FieldShape)
-                                .background(Color.White.copy(alpha = if (dark) 0.08f else 0.5f))
-                                .border(1.dp, if (dark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f), FieldShape)
-                                .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("出发地", fontSize = 12.sp, color = dim)
-                                Spacer(Modifier.height(3.dp))
-                                Text(main, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = ink)
-                                Spacer(Modifier.height(2.dp))
-                                Text(sub, fontSize = 12.sp, color = dim)
-                            }
-                            TextButton(onClick = { if (!locating) locate(if (trip.leaveRadiusM > 0) trip.leaveRadiusM else 300) }) {
-                                Text(if (locating) "定位中…" else "重新定位", fontSize = 13.sp, color = ink)
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Text("触发半径", fontSize = 13.sp, color = dim)
-                        Spacer(Modifier.height(6.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(100, 150, 200, 300).forEach { r ->
-                                GlassChip(selected = trip.leaveRadiusM == r, onClick = { onChange(trip.copy(leaveRadiusM = r)) },
-                                    label = "$r 米")
-                            }
+                        if (trip.leaveLat.isNaN()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text("还未设置出发地：请在下方「出发地」选择地点，否则仍按时间唤起。",
+                                fontSize = 12.sp, lineHeight = 17.sp, color = Fuse.Amber)
                         }
                     } else {
                         Text("下班时间不固定时，请选择「离开出发地后唤起」并设置一次出发地；也可将「通勤胶囊」添加至快捷开关，出发时手动触发。",
@@ -265,59 +196,123 @@ fun TripEditor(
                     }
                 }
             }
-            itemsIndexed(trip.legs) { i, leg ->
-                LegCard(
-                    index = i, leg = leg, isLast = i == trip.legs.size - 1,
-                    onChange = { updateLeg(i, it) },
-                    onRemove = { onChange(trip.copy(legs = trip.legs.toMutableList().also { l -> l.removeAt(i) })) },
-                    onAddBus = { onAddBus(i) }, onAddMetro = { onAddMetro(i) },
-                    onAddShuttle = { onEditShuttle(i, -1) },
-                    onEditShuttle = { ci -> onEditShuttle(i, ci) },
-                    tripId = trip.id,
-                    nextStop = trip.legs.getOrNull(i + 1)?.candidates?.firstOrNull(),
-                    onSplit = {
-                        // 一段里上车站不同的几条线 → 按上车站拆成先后几段（地铁在前）
-                        val groups = leg.candidates.groupBy { it.stopName }.values
-                            .sortedBy { g -> if (g.any { it.type == Candidate.Type.METRO }) 0 else 1 }
-                        val parts = groups.mapIndexed { k, g ->
-                            Leg(g, rideMin = leg.rideMin, rideMinManual = leg.rideMinManual,
-                                transferWalkMin = if (k == 0) leg.transferWalkMin else 3)
+            item {
+                Section("出发时间范围") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TimeBox(hhmm(trip.startMinute), dark) { pickTime = 0 }
+                        Text("至", color = dim, modifier = Modifier.padding(horizontal = 12.dp))
+                        TimeBox(hhmm(trip.endMinute), dark) { pickTime = 1 }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text("定位预热提前量", style = Type.Body, color = dim)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(5, 10, 15, 20).forEach { m ->
+                            GlassChip(selected = trip.warmupMin == m, onClick = { onChange(trip.copy(warmupMin = m)) },
+                                label = "$m 分钟")
                         }
-                        onChange(trip.copy(legs = trip.legs.toMutableList().also { l -> l.removeAt(i); l.addAll(i, parts) }))
-                    },
-                )
+                    }
+                }
             }
             item {
-                // 估算值只影响没打卡时的推算，默认收起，避免干扰「设一次就不用管」的主流程
-                var estimatesOpen by remember { mutableStateOf(false) }
-                GlassCard {
+                Section("出发地") {
+                    val main = trip.leaveName.ifEmpty { leaveAddr.ifEmpty { if (trip.leaveLat.isNaN()) "未设置" else "已设置" } }
+                    val sub = if (trip.leaveLat.isNaN()) "选择地点后可用于「离开出发地后唤起」"
+                        else "%.5f, %.5f".format(trip.leaveLat, trip.leaveLng)
                     Row(
-                        Modifier.fillMaxWidth().clickable { estimatesOpen = !estimatesOpen },
+                        Modifier.fillMaxWidth().clip(FieldShape)
+                            .background(Color.White.copy(alpha = if (dark) 0.08f else 0.5f))
+                            .border(1.dp, if (dark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f), FieldShape)
+                            .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        SectionLabel("节点预估（没打卡时用）", Modifier.weight(1f))
-                        Text(
-                            if (estimatesOpen) "收起"
-                            else "上车 +${trip.boardEstimateSec} 秒 · 下车 −${trip.alightEstimateSec} 秒",
-                            fontSize = 12.sp, color = dim,
-                        )
+                        Column(Modifier.weight(1f)) {
+                            Text("出发地", fontSize = 12.sp, color = dim)
+                            Spacer(Modifier.height(3.dp))
+                            Text(main, style = Type.Section, color = ink)
+                            Spacer(Modifier.height(2.dp))
+                            Text(sub, fontSize = 12.sp, color = dim)
+                        }
+                        TextButton(onClick = { pickFor = 0 }) {
+                            Text("选择地点", fontSize = 13.sp, color = ink)
+                        }
                     }
-                    if (estimatesOpen) {
+                    if (trip.leaveRadiusM > 0) {
                         Spacer(Modifier.height(10.dp))
-                        Stepper("过闸后预计多久上车", trip.boardEstimateSec, 0, 900, unit = "秒") {
-                            onChange(trip.copy(boardEstimateSec = it))
+                        Text("触发半径", style = Type.BodyDim, color = dim)
+                        Spacer(Modifier.height(6.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(100, 150, 200, 300).forEach { r ->
+                                GlassChip(selected = trip.leaveRadiusM == r, onClick = { onChange(trip.copy(leaveRadiusM = r)) },
+                                    label = "$r 米")
+                            }
                         }
-                        Stepper("终点下车比出站提前", trip.alightEstimateSec, 0, 900, unit = "秒") {
-                            onChange(trip.copy(alightEstimateSec = it))
-                        }
-                        Text("「过闸后预计多久上车」用于没打卡时的上车推算，推算值也会计入学习样本。出站时间永远以刷卡为准；「终点下车比出站提前」只在忘记下车打卡时，用出站时间倒推下车，学到实际差值后会优先用实际值。推算值带「≈」标记。",
-                            fontSize = 12.sp, lineHeight = 17.sp, color = dim)
                     }
+                }
+            }
+            val metroIdxs = trip.legs.indices.filter { i -> trip.legs[i].candidates.any { it.isMetro() } }
+            val firstMetroIdx = metroIdxs.firstOrNull() ?: -1
+            val lastMetroIdx = metroIdxs.lastOrNull() ?: -1
+            trip.legs.forEachIndexed { i, leg ->
+                item(key = "leg-$i") {
+                    LegCard(
+                        index = i, leg = leg, isLast = i == trip.legs.size - 1,
+                        onChange = { updateLeg(i, it) },
+                        onRemove = { onChange(trip.copy(legs = trip.legs.toMutableList().also { l -> l.removeAt(i) })) },
+                        onAddBus = { onAddBus(i) }, onAddMetro = { onAddMetro(i) },
+                        onAddShuttle = { onEditShuttle(i, -1) },
+                        onEditShuttle = { ci -> onEditShuttle(i, ci) },
+                        tripId = trip.id,
+                        nextStop = trip.legs.getOrNull(i + 1)?.candidates?.firstOrNull(),
+                        // 上车预估融入第一个地铁段，下车预估融入最后一个地铁段；没有地铁段则都不显示
+                        boardEstimate = trip.boardEstimateSec.takeIf { i == firstMetroIdx },
+                        alightEstimate = trip.alightEstimateSec.takeIf { i == lastMetroIdx },
+                        onChangeBoardEstimate = { onChange(trip.copy(boardEstimateSec = it)) },
+                        onChangeAlightEstimate = { onChange(trip.copy(alightEstimateSec = it)) },
+                        onSplit = {
+                            // 一段里上车站不同的几条线 → 按上车站拆成先后几段（地铁在前）
+                            val groups = leg.candidates.groupBy { it.stopName }.values
+                                .sortedBy { g -> if (g.any { it.type == Candidate.Type.METRO }) 0 else 1 }
+                            val parts = groups.mapIndexed { k, g ->
+                                Leg(g, rideMin = leg.rideMin, rideMinManual = leg.rideMinManual,
+                                    transferWalkMin = if (k == 0) leg.transferWalkMin else 3)
+                            }
+                            onChange(trip.copy(legs = trip.legs.toMutableList().also { l -> l.removeAt(i); l.addAll(i, parts) }))
+                        },
+                    )
                 }
             }
             item {
                 PillButton(secondary = true, onClick = { onChange(trip.copy(legs = trip.legs + Leg(emptyList()))) }, modifier = Modifier.fillMaxWidth()) {
                     Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("添加换乘段")
+                }
+            }
+            item {
+                Section("目的地（可选）") {
+                    Row(
+                        Modifier.fillMaxWidth().clip(FieldShape)
+                            .background(Color.White.copy(alpha = if (dark) 0.08f else 0.5f))
+                            .border(1.dp, if (dark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f), FieldShape)
+                            .padding(start = 12.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("目的地", fontSize = 12.sp, color = dim)
+                            Spacer(Modifier.height(3.dp))
+                            Text(trip.destName.ifEmpty { "未设置" }, style = Type.Section, color = ink)
+                            if (trip.destMode()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text("%.5f, %.5f".format(trip.destLat, trip.destLng), fontSize = 12.sp, color = dim)
+                            }
+                        }
+                        TextButton(onClick = { pickFor = 1 }) { Text("选择地点", fontSize = 13.sp, color = ink) }
+                        if (trip.destMode()) TextButton(onClick = {
+                            onChange(trip.copy(destLat = Double.NaN, destLng = Double.NaN, destName = ""))
+                        }) { Text("清除", fontSize = 13.sp, color = dim) }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("设置后，到达目的地 150 米内驻留满 3 分钟、且地铁已出站，会自动结束行程。",
+                        fontSize = 12.sp, lineHeight = 17.sp, color = dim)
                 }
             }
     }
@@ -346,6 +341,20 @@ fun TripEditor(
             },
         )
     }
+
+    pickFor?.let { f ->
+        LocationPicker(
+            title = if (f == 0) "选择出发地" else "选择目的地",
+            initLat = if (f == 0) trip.leaveLat.takeIf { !it.isNaN() } else trip.destLat.takeIf { !it.isNaN() },
+            initLng = if (f == 0) trip.leaveLng.takeIf { !it.isNaN() } else trip.destLng.takeIf { !it.isNaN() },
+            onBack = { pickFor = null },
+            onPick = { name, lat, lng ->
+                if (f == 0) onChange(trip.copy(leaveLat = lat, leaveLng = lng, leaveName = name))
+                else onChange(trip.copy(destLat = lat, destLng = lng, destName = name))
+                pickFor = null
+            },
+        )
+    }
 }
 
 /** 一个小节 = 一张玻璃卡：小标题 + 内容 */
@@ -368,7 +377,7 @@ private fun TimeBox(text: String, dark: Boolean, onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 8.dp),
     ) {
-        Text(text, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Fuse.ink(dark), style = TnumStyle)
+        Text(text, style = Type.MetricLarge, color = Fuse.ink(dark))
     }
 }
 
@@ -376,6 +385,11 @@ private fun TimeBox(text: String, dark: Boolean, onClick: () -> Unit) {
 private fun LegCard(
     onSplit: () -> Unit = {},
     nextStop: Candidate? = null,
+    // 非空表示在本段内显示对应的地铁预估（首段显示上车、末段显示下车）
+    boardEstimate: Int? = null,
+    alightEstimate: Int? = null,
+    onChangeBoardEstimate: (Int) -> Unit = {},
+    onChangeAlightEstimate: (Int) -> Unit = {},
     index: Int, leg: Leg, isLast: Boolean,
     tripId: String,
     onChange: (Leg) -> Unit, onRemove: () -> Unit,
@@ -445,7 +459,7 @@ private fun LegCard(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 LineBadge(shortLine(c.name.ifEmpty { c.label() }), lineColor(c))
                                 Spacer(Modifier.width(8.dp))
-                                Text(c.label(), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ink)
+                                Text(c.label(), style = Type.Section, color = ink)
                                 Spacer(Modifier.width(6.dp))
                                 ModeTag(
                                     when (c.type) {
@@ -562,6 +576,61 @@ private fun LegCard(
                     if (metro != null) "默认 ${ride.minutes} 分钟（选好下车站后可估算）" else "默认 ${ride.minutes} 分钟"
             }
             Text(note, fontSize = 12.sp, lineHeight = 17.sp, color = noteColor)
+            if (boardEstimate != null) {
+                InlineEstimate(
+                    title = "上车预估（没打卡时用）",
+                    summary = "过闸后 +$boardEstimate 秒上车",
+                    label = "过闸后预计多久上车",
+                    value = boardEstimate,
+                    note = "「过闸后预计多久上车」用于没打卡时的上车推算，推算值也会计入学习样本。推算值带「≈」标记。",
+                    onChange = onChangeBoardEstimate,
+                )
+            }
+            if (alightEstimate != null) {
+                InlineEstimate(
+                    title = "下车预估（没打卡时用）",
+                    summary = "下车比出站早 $alightEstimate 秒",
+                    label = "终点下车比出站提前",
+                    value = alightEstimate,
+                    note = "出站时间永远以刷卡为准；「终点下车比出站提前」只在忘记下车打卡时，用出站时间倒推下车，学到实际差值后会优先用实际值。推算值带「≈」标记。",
+                    onChange = onChangeAlightEstimate,
+                )
+            }
+    }
+}
+
+/** 地铁段内联的预估项：默认收起，点标题展开 */
+@Composable
+private fun InlineEstimate(
+    title: String,
+    summary: String,
+    label: String,
+    value: Int,
+    note: String,
+    onChange: (Int) -> Unit,
+) {
+    val dark = isSystemInDarkTheme()
+    val ink = Fuse.ink(dark)
+    val dim = Fuse.dim(dark)
+    var open by remember { mutableStateOf(false) }
+    Spacer(Modifier.height(10.dp))
+    Column(
+        Modifier.fillMaxWidth().clip(FieldShape)
+            .background(Color.White.copy(alpha = if (dark) 0.05f else 0.4f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().clickable { open = !open },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = ink, modifier = Modifier.weight(1f))
+            Text(if (open) "收起" else summary, fontSize = 12.sp, color = dim)
+        }
+        if (open) {
+            Spacer(Modifier.height(6.dp))
+            Stepper(label, value, 0, 900, unit = "秒", onChange = onChange)
+            Text(note, fontSize = 12.sp, lineHeight = 17.sp, color = dim)
+        }
     }
 }
 

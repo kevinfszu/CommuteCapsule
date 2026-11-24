@@ -30,7 +30,12 @@ fun AppTheme(content: @Composable () -> Unit) {
         dark -> Dark
         else -> Light
     }
-    MaterialTheme(colorScheme = scheme, content = content)
+    MaterialTheme(
+        colorScheme = scheme,
+        // 对话框标题（AlertDialog 用 headlineSmall）统一 20/600，避免默认 24sp 压过页面标题
+        typography = androidx.compose.material3.Typography(headlineSmall = Type.DialogTitle),
+        content = content,
+    )
 }
 
 /** 首页「烟玻璃看板 + 浅玻璃列表」用到的固定配色 */

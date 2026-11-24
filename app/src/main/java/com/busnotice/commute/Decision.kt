@@ -93,6 +93,8 @@ object Decision {
         val headline: String,  // 胶囊短文本
         val detail: String,    // 通知正文
         val next: Pair<Option, Arrival>? = null,
+        val lead: String = detail,        // 看板第一行：不含本趟/下趟
+        val batch: String = "",           // 看板第二行：本趟/下趟，本趟数字会被强调
     )
 
     fun walkSeconds(distM: Double): Int =
@@ -229,35 +231,47 @@ object Decision {
         val tipEst = if (next == null) options.firstNotNullOfOrNull { metroNextMin(it.tip, hw) } else null
         // 不知道方向时两个方向都列出来
         val dirs = trains.filter { it.second.busId.isNotEmpty() }.distinctBy { it.second.busId }
-        val nextText = when {
-            dirs.size > 1 -> " · " + dirs.joinToString(" · ") { "${it.second.busId} ${eta(it.third, it.second.estimated)}" }
-            trains.isNotEmpty() -> {
-                // 本趟 = 还没开走的第一班（含正在站内停靠的），下趟 = 它后面一班；和常见地图 App 一样
-                val cur = trains[0]
-                val after = trains.getOrNull(1)
-                val miss = catchable != null && catchable !== cur && catchable.first.located
-                " · 本趟" + eta(cur.third, cur.second.estimated).let { if (it.endsWith("进站") || it.endsWith("站内")) it else "${it}进站" } +
-                    (after?.let { " · 下趟" + eta(it.third, it.second.estimated) } ?: "") +
-                    (if (miss) " · 步行前往可乘下趟" else "")
+        // 本趟 = 还没开走的第一班（含正在站内停靠的），下趟 = 它后面一班；和常见地图 App 一样
+        val batch = if (trains.isNotEmpty()) {
+            val cur = trains[0]
+            val after = trains.getOrNull(1)
+            val miss = catchable != null && catchable !== cur && catchable.first.located
+            buildString {
+                append("本趟").append(
+                    eta(cur.third, cur.second.estimated)
+                        .let { if (it.endsWith("进站") || it.endsWith("站内")) it else "${it}进站" }
+                )
+                after?.let { append(" · 下趟").append(eta(it.third, it.second.estimated)) }
+                if (miss) append(" · 步行前往可乘下趟")
             }
-            tipEst != null -> " · 下一班约 $tipEst 分钟（估算）"
-            options.any { it.tip == END_OF_SERVICE } -> " · 今日末班已过"
-            else -> " · 约 $hw 分钟一班"
+        } else ""
+        val nextText = when {
+            dirs.size > 1 -> dirs.joinToString(" · ") { "${it.second.busId} ${eta(it.third, it.second.estimated)}" }
+            batch.isNotEmpty() -> batch
+            tipEst != null -> "下一班约 $tipEst 分钟（估算）"
+            options.any { it.tip == END_OF_SERVICE } -> "今日末班已过"
+            else -> "约 $hw 分钟一班"
         }
         val mins = next ?: tipEst
         val oo = catchable?.first ?: o
         val head = mins?.let { if (it <= 1) "进站" else if (est || next == null) "约${it}分" else "${it}分" }
+        // detail 给通知用（一行）；看板把 lead 和 nextText 分两行显示，本趟数字会被强调
+        fun adv(mode: Mode, opt: Option, arr: Arrival?, walk: Int, head: String, lead: String) = Advice(
+            mode, opt, arr, walk, 0, head,
+            if (nextText.isEmpty()) lead else "$lead · $nextText",
+            lead = lead, batch = nextText,
+        )
         return when {
-            !oo.located -> Advice(Mode.METRO, oo, catchable?.second, 0, 0, head ?: "定位中",
-                "${oo.candidate.stopName}（定位中）$nextText")
-            oo.walkSec == 0 -> Advice(Mode.METRO, oo, catchable?.second, 0, 0, head ?: "进站",
-                "已到 ${oo.candidate.stopName}$nextText")
+            !oo.located -> adv(Mode.METRO, oo, catchable?.second, 0,
+                head ?: "定位中", "${oo.candidate.stopName}（定位中）")
+            oo.walkSec == 0 -> adv(Mode.METRO, oo, catchable?.second, 0,
+                head ?: "进站", "已到 ${oo.candidate.stopName}")
             else -> {
                 val walk = mins(oo.walkSec).coerceAtLeast(1)
-                if (walk > 45) Advice(Mode.METRO, oo, catchable?.second, oo.walkSec, 0, "距离较远",
-                    "距离较远，请确认定位与行程方向$nextText")
-                else Advice(Mode.METRO, oo, catchable?.second, oo.walkSec, 0, head ?: "前往地铁站",
-                    "步行约 $walk 分钟到 ${oo.candidate.stopName}$nextText")
+                if (walk > 45) adv(Mode.METRO, oo, catchable?.second, oo.walkSec,
+                    "距离较远", "距离较远，请确认定位与行程方向")
+                else adv(Mode.METRO, oo, catchable?.second, oo.walkSec,
+                    head ?: "前往地铁站", "步行约 $walk 分钟到 ${oo.candidate.stopName}")
             }
         }
     }

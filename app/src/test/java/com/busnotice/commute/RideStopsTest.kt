@@ -77,4 +77,23 @@ class RideStopsTest {
         val iv = RideStops.intervals(t0, listOf(StopMark(1, t0 + 10_000), StopMark(2, t0 + 610_000)))
         assertEquals(listOf(RideStops.Interval(1, 2, 600, 1)), iv)
     }
+
+    @Test
+    fun `StopOrder 重叠序列合并成一条完整站序`() {
+        val seq = StopOrder.merge(listOf(listOf("A", "B", "C"), listOf("B", "C", "D")))
+        assertEquals(listOf("A", "B", "C", "D"), seq)
+    }
+
+    @Test
+    fun `StopOrder 逆序输入仍按行车方向排列`() {
+        val seq = StopOrder.merge(listOf(listOf("D", "C"), listOf("C", "B"), listOf("B", "A")))
+        assertEquals(listOf("D", "C", "B", "A"), seq)
+    }
+
+    @Test
+    fun `StopOrder 冲突边以先出现的为准`() {
+        // A→B 与 B→A 冲突：先到先得，避免出现环
+        val seq = StopOrder.merge(listOf(listOf("A", "B"), listOf("B", "A")))
+        assertEquals(listOf("A", "B"), seq)
+    }
 }

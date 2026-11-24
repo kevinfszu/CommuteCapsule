@@ -2,7 +2,6 @@
 
 package com.busnotice.commute.ui
 
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -23,6 +22,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,6 +37,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.busnotice.commute.Candidate
 import com.busnotice.commute.ImportedJsonSource
 import com.busnotice.commute.JsonTransit
 import com.busnotice.commute.Transit
@@ -54,6 +55,8 @@ fun LineImportScreen(
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val scope = rememberCoroutineScope()
+    // 导入、清空等一次性结果用页内 Snackbar
+    val snack = remember { SnackbarHostState() }
     val ink = Fuse.ink(dark)
     val dim = Fuse.dim(dark)
     var version by remember { mutableStateOf(0) }
@@ -85,11 +88,10 @@ fun LineImportScreen(
                 version++
                 lastImport = "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点（同名线路已覆盖）"
                 confirmClear = false
-                Toast.makeText(
-                    ctx, "已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点", Toast.LENGTH_LONG,
-                ).show()
+                snack.showSnackbar("已导入 ${it.lineCount} 条线路、${it.stationCount} 个站点")
             }.onFailure {
-                Toast.makeText(ctx, "导入失败：${it.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
+                val msg = it.message ?: "未知错误"
+                scope.launch { snack.showSnackbar("导入失败：$msg") }
             }
         }
     }
@@ -97,6 +99,7 @@ fun LineImportScreen(
     GlassPage(
         title = "线路导入",
         onBack = onBack,
+        snackbar = snack,
         actions = {
             // ＋ 新增：两种导入方式收进菜单
             Box {
@@ -160,31 +163,31 @@ fun LineImportScreen(
         if (importing) {
             item {
                 GlassCard {
-                    Text("正在导入 JSON…", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Fuse.accent(dark))
+                    Text("正在导入 JSON…", style = Type.BodyDim, color = Fuse.accent(dark))
                 }
             }
         }
         lastImport?.let { msg ->
             item {
                 GlassCard {
-                    Text(msg, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Fuse.accent(dark))
+                    Text(msg, style = Type.BodyDim, color = Fuse.accent(dark))
                 }
             }
         }
         item {
             GlassCard {
                 SectionLabel("当前数据源")
-                Text("线路和站点：$sourceTitle", fontSize = 14.sp, color = ink, modifier = Modifier.padding(top = 8.dp))
+                Text("线路和站点：$sourceTitle", style = Type.Body, color = ink, modifier = Modifier.padding(top = 8.dp))
                 val note = remember(version) { noteText(meta) }
                 if (note.isNotEmpty()) {
                     Text(
-                        note, fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                        note, style = Type.Caption, color = dim,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
                 Text(
                     "JSON 格式见 docs/DATA_SOURCE.md。若行程进行中，请在导入后结束并重新开始。",
-                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                    style = Type.Caption, color = dim,
                     modifier = Modifier.padding(top = 6.dp),
                 )
             }
@@ -196,7 +199,7 @@ fun LineImportScreen(
                     if (!hasImport) {
                         Text(
                             "还没有导入线路。点右上角 ＋ 导入 JSON 或用高德生成。当前使用内置演示数据。",
-                            fontSize = 13.sp, color = dim, modifier = Modifier.padding(top = 8.dp),
+                            style = Type.BodyDim, color = dim, modifier = Modifier.padding(top = 8.dp),
                         )
                     }
                 }
@@ -211,6 +214,10 @@ fun LineImportScreen(
                             headline = name,
                             supporting = lineSummary(dirs),
                             onClick = { onOpenLine(name) },
+                            // 地铁线路用线路特征色线路牌，和行程详情、算法学习保持一致
+                            leading = if (Candidate.looksLikeMetro(name)) {
+                                { LineBadge(shortLine(name), lineColor(null, name)) }
+                            } else null,
                         )
                     }
                 }
@@ -231,7 +238,7 @@ fun LineImportScreen(
                     version++
                     lastImport = null
                     confirmClear = false
-                    Toast.makeText(ctx, "已清空线路，恢复默认数据源", Toast.LENGTH_SHORT).show()
+                    scope.launch { snack.showSnackbar("已清空线路，恢复默认数据源") }
                 })
             },
             dismissButton = { DialogButton("取消", onClick = { confirmClear = false }) },

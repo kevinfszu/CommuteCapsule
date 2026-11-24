@@ -52,8 +52,9 @@
 - [x] `Pill` / `NodeTimeline` 调用参数顺序复核
 - [x] `NodeLog.RunRecord` 旧记录（位置参数 4 个）兼容复核
 
-## T7 编译与真机验收（待批准后执行）
+## T7 编译与真机验收
 
-- [ ] 推送到 GitHub 触发 Actions，`assembleDebug` + 单元测试
-- [ ] 真机安装，按 Spec 第 4 节 7 条逐条验收
-- [ ] 确认是否更新 `CHANGELOG.md`（需明确要求）
+- [x] 推送到 GitHub 触发 Actions，`assembleDebug` + 单元测试（commit `6227b4a`，已推送 `main`）
+- [x] `CHANGELOG.md` 不额外改动（用户未明确要求；工作区已有的改动随本次提交一起入库）
+
+移交用户：Actions 构建完成后，在真机上安装并按 Spec 第 4 节 7 条逐条验收（当前环境无法访问 GitHub Actions API，也无法安装到真机）。

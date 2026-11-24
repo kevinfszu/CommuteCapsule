@@ -47,6 +47,9 @@ object NodeLog {
     /** 当前建议打点的节点（由服务根据状态机维护）。 */
     val current = MutableStateFlow<NodeRef?>(null)
 
+    /** 行程记录有写入/修正时自增，首页据此重读「最近行程」。 */
+    val revision = MutableStateFlow(0L)
+
     private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     private fun key(tripId: String, startAt: Long) = "$tripId:$startAt"
@@ -202,7 +205,7 @@ object NodeLog {
     private fun ride(a: Anchors, leg: Int): Int =
         a.rideSec.getOrNull(leg)?.coerceIn(0, 3 * 3600) ?: 0
 
-    // ---------- 行程记录（最多 30 条，保留 30 天；删除时可回滚该次学习样本） ----------
+    // ---------- 行程记录（最多 30 条，保留 30 天；固定的记录额外保留，删除时可回滚该次学习样本） ----------
 
     private const val HISTORY = "history"
     private const val MAX_RECORDS = 30
@@ -218,15 +221,26 @@ object NodeLog {
         val test: Boolean = false,
         val marks: List<StopMark> = emptyList(),
         val markNames: List<String> = emptyList(),
+        /** 每段可打卡的完整站点名，下标与行程段一致 */
+        val legStops: List<List<String>> = emptyList(),
+        /** 打卡记录所属的行程段下标，-1 表示旧记录未保存 */
+        val markLeg: Int = -1,
         val learned: List<String> = emptyList(),
+        /** 固定保留：不占 30 条名额，也不受 30 天过期清理 */
+        val pinned: Boolean = false,
     ) {
         fun toJson(): JSONObject = JSONObject()
             .put("id", id).put("saved", savedAt)
             .put("trip", trip.toJson()).put("nodes", NodeLog.encode(nodes))
             .put("aborted", aborted).put("test", test)
-            .put("marks", marks.joinToString(",") { "${it.idx}:${it.at}" })
+            .put("marks", marks.joinToString(",") { "${it.leg}:${it.idx}:${it.at}" })
             .put("markNames", JSONArray().apply { markNames.forEach { put(it) } })
+            .put("legStops", JSONArray().apply {
+                legStops.forEach { leg -> put(JSONArray().apply { leg.forEach { put(it) } }) }
+            })
+            .put("markLeg", markLeg)
             .put("learned", JSONArray().apply { learned.forEach { put(it) } })
+            .put("pinned", pinned)
 
         companion object {
             fun fromJson(o: JSONObject): RunRecord = RunRecord(
@@ -238,17 +252,34 @@ object NodeLog {
                 test = o.optBoolean("test"),
                 marks = o.optString("marks").split(',').mapNotNull { e ->
                     val kv = e.split(':')
-                    if (kv.size != 2) return@mapNotNull null
-                    val idx = kv[0].toIntOrNull() ?: return@mapNotNull null
-                    val at = kv[1].toLongOrNull() ?: return@mapNotNull null
-                    StopMark(idx, at)
+                    val leg: Int
+                    val idx: Int
+                    val at: Long
+                    if (kv.size == 3) {
+                        leg = kv[0].toIntOrNull() ?: return@mapNotNull null
+                        idx = kv[1].toIntOrNull() ?: return@mapNotNull null
+                        at = kv[2].toLongOrNull() ?: return@mapNotNull null
+                    } else if (kv.size == 2) {
+                        leg = -1
+                        idx = kv[0].toIntOrNull() ?: return@mapNotNull null
+                        at = kv[1].toLongOrNull() ?: return@mapNotNull null
+                    } else return@mapNotNull null
+                    StopMark(idx, at, leg)
                 },
                 markNames = o.optJSONArray("markNames")?.let { a ->
                     (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotEmpty) }
                 } ?: emptyList(),
+                legStops = o.optJSONArray("legStops")?.let { a ->
+                    (0 until a.length()).map { li ->
+                        val la = a.optJSONArray(li) ?: return@map emptyList()
+                        (0 until la.length()).mapNotNull { la.optString(it).takeIf(String::isNotEmpty) }
+                    }
+                } ?: emptyList(),
+                markLeg = o.optInt("markLeg", -1),
                 learned = o.optJSONArray("learned")?.let { a ->
                     (0 until a.length()).mapNotNull { a.optString(it).takeIf(String::isNotEmpty) }
                 } ?: emptyList(),
+                pinned = o.optBoolean("pinned"),
             )
         }
     }
@@ -257,13 +288,20 @@ object NodeLog {
         ctx: Context, trip: Trip, nodes: List<Stamp>, at: Long = System.currentTimeMillis(),
         aborted: Boolean = false, test: Boolean = false,
         marks: List<StopMark> = emptyList(), markNames: List<String> = emptyList(),
+        legStops: List<List<String>> = emptyList(), markLeg: Int = -1,
         learned: List<String> = emptyList(),
-    ) {
+    ): String {
         val rec = RunRecord(
             id = java.util.UUID.randomUUID().toString(), savedAt = at, trip = trip, nodes = nodes,
-            aborted = aborted, test = test, marks = marks, markNames = markNames, learned = learned,
+            aborted = aborted, test = test, marks = marks, markNames = markNames,
+            legStops = legStops, markLeg = markLeg, learned = learned,
         )
-        writeHistory(ctx, (records(ctx, at) + rec).take(MAX_RECORDS))
+        // 固定的记录不参与 30 条上限的淘汰，作为额外记录长期保留
+        val old = records(ctx, at)
+        val pins = old.filter { it.pinned }
+        val fresh = (listOf(rec) + old.filterNot { it.pinned }).take(MAX_RECORDS)
+        writeHistory(ctx, (pins + fresh).distinctBy { it.id }.sortedByDescending { it.savedAt })
+        return rec.id
     }
 
     /** 全部行程记录，新的在前（旧版本只存了一条 LAST，首次读取时迁移过来） */
@@ -280,10 +318,20 @@ object NodeLog {
         val arr = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
         return (0 until arr.length()).mapNotNull { i ->
             runCatching { RunRecord.fromJson(arr.getJSONObject(i)) }.getOrNull()
-        }.filter { now - it.savedAt <= HISTORY_KEEP_MS }
+        }.filter { it.pinned || now - it.savedAt <= HISTORY_KEEP_MS }.sortedByDescending { it.savedAt }
     }
 
     fun record(ctx: Context, id: String): RunRecord? = records(ctx).firstOrNull { it.id == id }
+
+    /** 固定保留 / 取消固定：固定后不占 30 条名额，也不受 30 天过期清理 */
+    fun setPinned(ctx: Context, id: String, pinned: Boolean): Boolean {
+        val all = records(ctx).toMutableList()
+        val i = all.indexOfFirst { it.id == id }
+        if (i < 0) return false
+        all[i] = all[i].copy(pinned = pinned)
+        writeHistory(ctx, all)
+        return true
+    }
 
     /** 删除一条记录：该次行程写入的学习样本一并回滚 */
     fun deleteRecord(ctx: Context, id: String): Boolean {
@@ -296,32 +344,45 @@ object NodeLog {
         return true
     }
 
-    fun lastRun(ctx: Context, now: Long = System.currentTimeMillis()): Pair<Trip, List<Stamp>>? {
-        val r = records(ctx, now).firstOrNull() ?: return null
-        if (now - r.savedAt > LAST_KEEP_MS) return null
-        return r.trip to r.nodes
+    fun lastRecord(ctx: Context, now: Long = System.currentTimeMillis()): RunRecord? =
+        records(ctx, now).firstOrNull()?.takeIf { now - it.savedAt <= LAST_KEEP_MS }
+
+    /** 重新学习后更新每条记录的样本日志，保证之后删除记录仍能精确回滚 */
+    fun setLearned(ctx: Context, byId: Map<String, List<String>>) {
+        if (byId.isEmpty()) return
+        writeHistory(ctx, records(ctx).map { r -> byId[r.id]?.let { r.copy(learned = it) } ?: r })
     }
 
-    fun updateLast(ctx: Context, nodes: List<Stamp>) {
-        val p = prefs(ctx)
-        if (p.getString(HISTORY, null) == null) {
-            // 旧版本只有一条 LAST：继续原地更新
-            val raw = p.getString(LAST, null) ?: return
-            val o = runCatching { JSONObject(raw) }.getOrNull() ?: return
-            o.put("nodes", encode(nodes))
-            p.edit().putString(LAST, o.toString()).apply()
-            return
-        }
+    /** 按 id 覆盖一条记录（尾程结束、人工修正时使用），保持记录数不变。 */
+    fun updateRecord(ctx: Context, id: String, nodes: List<Stamp>, learned: List<String>? = null): Boolean {
         val all = records(ctx).toMutableList()
-        if (all.isEmpty()) return
-        all[0] = all[0].copy(nodes = nodes)
+        val i = all.indexOfFirst { it.id == id }
+        if (i < 0) return false
+        all[i] = all[i].copy(nodes = nodes, learned = learned ?: all[i].learned)
         writeHistory(ctx, all)
+        return true
+    }
+
+    /** 整条替换（修正节点后重算学习样本），id 不存在时返回 false。 */
+    fun replace(ctx: Context, rec: RunRecord): Boolean {
+        val all = records(ctx).toMutableList()
+        val i = all.indexOfFirst { it.id == rec.id }
+        if (i < 0) {
+            if (rec.id != "legacy") return false
+            // 旧版只有一条 LAST：首次修正时迁移成 HISTORY
+            writeHistory(ctx, listOf(rec))
+            return true
+        }
+        all[i] = rec
+        writeHistory(ctx, all)
+        return true
     }
 
     private fun writeHistory(ctx: Context, list: List<RunRecord>) {
         val arr = JSONArray()
         list.forEach { arr.put(it.toJson()) }
         prefs(ctx).edit().putString(HISTORY, arr.toString()).apply()
+        revision.value++
     }
 
     fun clearActive(ctx: Context) {

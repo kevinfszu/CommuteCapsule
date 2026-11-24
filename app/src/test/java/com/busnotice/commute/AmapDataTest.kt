@@ -3,7 +3,9 @@ package com.busnotice.commute
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.URLEncoder
@@ -297,5 +299,76 @@ class AmapDataTest {
         val dy = (lat2 - lat1) * 111_320.0
         val dx = (lng2 - lng1) * 111_320.0 * kotlin.math.cos(Math.toRadians(lat1))
         return kotlin.math.sqrt(dx * dx + dy * dy)
+    }
+
+    // ---------- 选点 ----------
+
+    @Test
+    fun `input tips url encodes keyword and gcj location`() {
+        val url = AmapData.inputTipsUrl(" k ", "广州", "华师", 23.1, 113.3)
+        assertTrue(url.contains("assistant/inputtips"))
+        assertTrue(url.contains("key=k"))
+        assertTrue(url.contains("keywords=${URLEncoder.encode("华师", "UTF-8")}"))
+        val (gLat, gLng) = AmapData.wgsToGcj(23.1, 113.3)
+        assertTrue(url.contains("location=%.6f,%.6f".format(gLng, gLat)))
+        assertFalse(AmapData.inputTipsUrl("k", "广州", "华师", null, null).contains("location="))
+    }
+
+    @Test
+    fun `static map url has markers at gcj point`() {
+        val url = AmapData.staticMapUrl("k", 23.1, 113.3)
+        assertTrue(url.contains("staticmap"))
+        assertTrue(url.contains("markers="))
+        assertTrue(url.contains("0xE4572E"))
+    }
+
+    @Test
+    fun `parse tips skips entries without location`() {
+        val json = JSONObject().put("status", "1").put(
+            "tips", JSONArray()
+                .put(
+                    JSONObject().put("name", "华师")
+                        .put("address", JSONArray().put("广东省广州市天河区").put("中山大道西"))
+                        .put("location", "113.345678,23.123456"),
+                )
+                .put(JSONObject().put("name", "地铁3号线").put("address", "线路")),
+        ).toString()
+        val tips = AmapData.parseTips(json)
+        assertEquals(1, tips.size)
+        val p = tips.single()
+        assertEquals("华师", p.name)
+        assertEquals("广东省广州市天河区中山大道西", p.address)
+        val (wLat, wLng) = AmapData.gcjToWgs(23.123456, 113.345678)
+        assertEquals(wLat, p.lat, 1e-9)
+        assertEquals(wLng, p.lng, 1e-9)
+        assertNull(p.distanceM)
+        assertTrue(AmapData.parseTips("{\"status\":\"0\"}").isEmpty())
+    }
+
+    @Test
+    fun `parse around keeps distance and string address`() {
+        val json = JSONObject().put("status", "1").put(
+            "pois", JSONArray().put(
+                JSONObject().put("name", "石牌桥").put("address", "天河路")
+                    .put("location", "113.34,23.13").put("distance", "356"),
+            ),
+        ).toString()
+        val p = AmapData.parseAround(json).single()
+        assertEquals("石牌桥", p.name)
+        assertEquals("天河路", p.address)
+        assertEquals(356, p.distanceM)
+    }
+
+    @Test
+    fun `parse regeo uses formatted address and request point`() {
+        val json = JSONObject().put("status", "1").put(
+            "regeocode", JSONObject().put("formatted_address", "广东省广州市天河区中山大道西55号"),
+        ).toString()
+        val p = AmapData.parseRegeo(json, 23.1, 113.3)!!
+        assertEquals("广东省广州市天河区中山大道西55号", p.name)
+        assertEquals(23.1, p.lat, 0.0)
+        assertEquals(113.3, p.lng, 0.0)
+        assertNull(AmapData.parseRegeo("不是 JSON"))
+        assertNull(AmapData.parseRegeo("{\"status\":\"0\"}"))
     }
 }

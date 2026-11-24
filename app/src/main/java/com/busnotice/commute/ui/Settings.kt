@@ -1,6 +1,5 @@
 package com.busnotice.commute.ui
 
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -21,6 +20,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -32,10 +32,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.busnotice.commute.CommuteService
 import com.busnotice.commute.DemoPlayer
-import com.busnotice.commute.Places
 import com.busnotice.commute.TraceLog
 import com.busnotice.commute.Updater
 
@@ -50,6 +48,8 @@ fun SettingsScreen(
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val dim = Fuse.dim(dark)
+    // 页内一次性结果统一用 Snackbar，替代系统 Toast
+    val snack = remember { SnackbarHostState() }
     var version by remember { mutableStateOf(0) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { version++ }
     val perms = remember(version) { permChecks(ctx) { p -> launcher.launch(p) } }
@@ -66,7 +66,7 @@ fun SettingsScreen(
         else -> "已全部开启 · 通常只需设置一次"
     }
 
-    GlassPage(title = "设置", onBack = onBack) {
+    GlassPage(title = "设置", onBack = onBack, snackbar = snack) {
         sectionHeader("行程")
         item {
             GlassCard(padding = 0.dp) {
@@ -82,6 +82,14 @@ fun SettingsScreen(
                     leading = { Icon(Icons.Default.Star, null, tint = dim, modifier = Modifier.size(20.dp)) },
                     onClick = onOpenLearn,
                 )
+                if (days > 0) {
+                    GlassRow(
+                        headline = "导出行程记录",
+                        supporting = "共 ${days} 天的记录，可分享为文件",
+                        leading = { Icon(Icons.Default.Share, null, tint = dim, modifier = Modifier.size(20.dp)) },
+                        onClick = { TraceLog.share(ctx) },
+                    )
+                }
             }
         }
         sectionHeader("线路与数据")
@@ -92,23 +100,6 @@ fun SettingsScreen(
                     supporting = "导入 JSON 或用高德生成，查看、修改、删除线路",
                     leading = { Icon(Icons.Default.Place, null, tint = dim, modifier = Modifier.size(20.dp)) },
                     onClick = onOpenSource,
-                )
-                if (days > 0) {
-                    GlassRow(
-                        headline = "导出行程记录",
-                        supporting = "共 ${days} 天的记录，可分享为文件",
-                        leading = { Icon(Icons.Default.Share, null, tint = dim, modifier = Modifier.size(20.dp)) },
-                        onClick = { TraceLog.share(ctx) },
-                    )
-                }
-                GlassRow(
-                    headline = "重置常去地点",
-                    supporting = "清空「家 / 公司」后重新学习",
-                    leading = { Icon(Icons.Default.Place, null, tint = dim, modifier = Modifier.size(20.dp)) },
-                    onClick = {
-                        Places.reset(ctx)
-                        Toast.makeText(ctx, "常去地点已清空，将重新学习", Toast.LENGTH_SHORT).show()
-                    },
                 )
             }
         }
@@ -151,7 +142,7 @@ fun SettingsScreen(
                     ) {
                         required.forEach { PermItem(it) }
                         if (optional.isNotEmpty()) {
-                            Text("可选", fontSize = 12.sp, color = dim)
+                            Text("可选", style = Type.Caption, color = dim)
                             optional.forEach { PermItem(it) }
                         }
                     }
@@ -161,14 +152,14 @@ fun SettingsScreen(
         item {
             Text(
                 "所有位置与出行记录只保存在本机。",
-                fontSize = 12.sp, color = dim,
+                style = Type.Caption, color = dim,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
         item {
             Text(
                 "CommuteCapsule v${Updater.currentName(ctx)}",
-                fontSize = 12.sp, color = dim, textAlign = TextAlign.Center,
+                style = Type.Caption, color = dim, textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 8.dp),
             )
         }

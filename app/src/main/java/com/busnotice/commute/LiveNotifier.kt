@@ -63,7 +63,7 @@ object LiveNotifier {
         )
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_QUIET, "到站后续记录", NotificationManager.IMPORTANCE_MIN).apply {
-                description = "记录到站后步行至目的地的路段（用于学习常去地点），最长 25 分钟"
+                description = "记录到站后步行至目的地的路段，最长 25 分钟"
                 setSound(null, null)
                 enableVibration(false)
                 setShowBadge(false)
@@ -185,6 +185,8 @@ object LiveNotifier {
             .setContentIntent(openApp(ctx))
             // 已经用流体云卡片提醒过了：通知栏这条只留底，不再响/震第二次
             .setSilent(popped || quiet)
+            // 同一 id 的后续更新不再由通知渠道触发响铃/震动（响铃由 AlarmBuzzer 单独控制）
+            .setOnlyAlertOnce(true)
         if (ack) {
             // 动宾 + 作用：通知栏脱离行程上下文，按钮必须说清点了会发生什么
             b.addAction(0, "点击通知 停止本次下车提醒", actionIntent(ctx, ActionReceiver.ACTION_ALIGHT_KNOW))

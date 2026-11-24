@@ -332,6 +332,7 @@ object DemoPlayer {
             TRIP_ID, trip.name, leg, trip.legs.size, trip.legs[leg].title(), head, detail, mode, progress, null, riding,
             stopsPassed = passed, stopsTotal = stops?.let { it.size - 1 },
             alightDue = alightDue,
+            alarmMuted = alightDue && muted?.first == leg,
             curStop = if (passed != null && stops != null) stops[passed.coerceIn(0, stops.lastIndex)] else null,
             fromStop = stops?.first(), toStop = stops?.last(),
         )

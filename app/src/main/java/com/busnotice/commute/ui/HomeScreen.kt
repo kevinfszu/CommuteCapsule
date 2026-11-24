@@ -82,7 +82,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -93,9 +92,7 @@ import com.busnotice.commute.Candidate
 import com.busnotice.commute.CommuteService
 import com.busnotice.commute.Learn
 import com.busnotice.commute.LiveState
-import com.busnotice.commute.Loc
 import com.busnotice.commute.NodeLog
-import com.busnotice.commute.Places
 import com.busnotice.commute.Reverse
 import com.busnotice.commute.Scheduler
 import com.busnotice.commute.Trip
@@ -112,7 +109,7 @@ internal data class Perm(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpenSettings: () -> Unit) {
+fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpenSettings: () -> Unit, onOpenRecords: () -> Unit) {
     val ctx = LocalContext.current
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
@@ -164,39 +161,17 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
         }
     }
 
-    // 常去地点：回到前台时用一次当前位置判断「在家 / 在公司 / 路上」，只在本机算
-    var placeVer by remember { mutableStateOf(0) }
-    var placeText by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(resumeTick, placeVer) {
-        val ok = granted(ctx, Manifest.permission.ACCESS_FINE_LOCATION) || granted(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)
-        val l = if (ok) runCatching { Loc.current(ctx) }.getOrNull() else null
-        placeText = runCatching {
-            if (l != null) Places.passive(ctx, l.latitude, l.longitude, l.accuracy, l.time)
-            val label = l?.let { Places.text(Places.classify(ctx, it.latitude, it.longitude, it.accuracy)) }
-            label ?: run {
-                val home = Places.progressOf(ctx, Places.Kind.HOME)
-                val work = Places.progressOf(ctx, Places.Kind.WORK)
-                val need = (3 - home).coerceAtLeast(0) + (3 - work).coerceAtLeast(0)
-                when {
-                    need == 0 -> null
-                    home >= 3 -> "正在记住你的公司（还差 $need 次）"
-                    work >= 3 -> "正在记住你的家（还差 $need 次）"
-                    else -> "正在记住你的家和公司（还差 $need 次）"
-                }
-            }
-        }.getOrNull()
-    }
-
     val listState = rememberLazyListState()
     // 点「测试」或行程开始后，实时看板插到列表顶部：滚回顶部让看板完整露出来，不被挤到上面
     val liveId = live?.tripId
     LaunchedEffect(liveId) { if (liveId != null) listState.animateScrollToItem(0) }
-    // 结束后的节点时间轴：回到前台或刚结束一趟时刷新
-    var lastRun by remember { mutableStateOf<Pair<Trip, List<NodeLog.Stamp>>?>(null) }
-    LaunchedEffect(resumeTick, liveId) {
-        lastRun = NodeLog.lastRun(ctx)?.takeIf { (_, ns) ->
-            val real = ns.count { it.src != NodeLog.Src.ESTIMATED }
-            val span = (ns.maxOfOrNull { it.at } ?: 0L) - (ns.minOfOrNull { it.at } ?: 0L)
+    // 结束后的节点时间轴：回到前台、刚结束一趟、记录被修正时都刷新
+    val recordRev by NodeLog.revision.collectAsState()
+    var lastRun by remember { mutableStateOf<NodeLog.RunRecord?>(null) }
+    LaunchedEffect(resumeTick, liveId, recordRev) {
+        lastRun = NodeLog.lastRecord(ctx)?.takeIf { r ->
+            val real = r.nodes.count { it.src != NodeLog.Src.ESTIMATED }
+            val span = (r.nodes.maxOfOrNull { it.at } ?: 0L) - (r.nodes.minOfOrNull { it.at } ?: 0L)
             real >= 2 && span >= 2 * 60_000L
         }
     }
@@ -222,7 +197,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                         Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("通勤胶囊", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = ink, modifier = Modifier.weight(1f))
+                        Text("通勤胶囊", style = Type.Display, color = ink, modifier = Modifier.weight(1f))
                         RoundButton(
                             onClick = onNew, dark = dark,
                             modifier = Modifier.semantics { contentDescription = "新建行程" },
@@ -237,7 +212,6 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                             Icon(Icons.Default.Settings, null, tint = ink, modifier = Modifier.size(20.dp))
                         }
                     }
-                    if (!demoOn) placeText?.let { PlaceChip(it, dark) }
                   }
                 }
                 val demoBoard = demo
@@ -253,7 +227,8 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                 else if (board != null && pendingTrip == null) {
                     item(key = "live") {
                         LiveBoard(board, trips.firstOrNull { it.id == board.tripId }, dark,
-                            onStopped = { scope.launch { snack.showSnackbar("行程已结束") } })
+                            onStopped = { scope.launch { snack.showSnackbar("行程已结束") } },
+                            onCancelled = { scope.launch { snack.showSnackbar("行程已取消，未生成记录") } })
                     }
                 } else if (pendingTrip != null && !pendingExpired) {
                     // 服务 30 秒内还没起来就不再显示占位
@@ -261,7 +236,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                     item(key = "live") { RestoringBoard(name, dark) }
                 }
                 if (!demoOn && board == null && pendingTrip == null) {
-                    lastRun?.let { (t, ns) -> item(key = "last-run") { RecentRunCard(t, ns, dark, snack) } }
+                    lastRun?.let { r -> item(key = "last-run") { RecentRunCard(r.trip, r.nodes, dark, snack, r.id, onOpenAll = onOpenRecords) } }
                 }
                 // 缺必需设置时放上面显眼处，全齐了就放到列表最后
                 val permUrgent = perms.any { !it.granted && !it.optional }
@@ -272,7 +247,7 @@ fun HomeScreen(resumeTick: Int, onNew: () -> Unit, onEdit: (Trip) -> Unit, onOpe
                         Spacer(Modifier.height(4.dp))
                         Text("新建行程并设置上车站与出发时间即可", style = MaterialTheme.typography.bodyMedium, color = dimColor)
                         Spacer(Modifier.height(12.dp))
-                        Text("点右上角 + 新建第一条行程", fontSize = 13.sp, color = dimColor)
+                        Text("点右上角 + 新建第一条行程", style = Type.BodyDim, color = dimColor)
                     }
                 }
                 if (demoOn) items(com.busnotice.commute.DemoPlayer.showTrips, key = { "demo-" + it.id }) { t ->
@@ -389,9 +364,9 @@ private fun PlaceChip(text: String, dark: Boolean) {
             .padding(horizontal = 10.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(Modifier.size(6.dp).clip(CircleShape).background(if (text.startsWith("常去")) Fuse.dim(dark) else Fuse.BusGreen))
+        Box(Modifier.size(6.dp).clip(CircleShape).background(Fuse.BusGreen))
         Spacer(Modifier.width(6.dp))
-        Text(text, fontSize = 12.sp, color = Fuse.ink(dark), style = TextStyle(fontFeatureSettings = "tnum"))
+        Text(text, style = Type.Caption.copy(fontFeatureSettings = "tnum"), color = Fuse.ink(dark))
     }
 }
 
@@ -407,12 +382,12 @@ private fun PermRow(perms: List<Perm>, dark: Boolean, onOpen: () -> Unit) {
         Modifier.fillMaxWidth().glass(dark).clickable(onClick = onOpen).padding(horizontal = 16.dp, vertical = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text("权限与设置", fontSize = 14.sp, color = ink)
+        Text("权限与设置", style = Type.Body, color = ink)
         Spacer(Modifier.width(12.dp))
         if (missing.isNotEmpty()) {
             Box(Modifier.size(7.dp).clip(CircleShape).background(Fuse.Amber))
             Spacer(Modifier.width(6.dp))
-            Text("还差：${missing.first().title}", fontSize = 12.sp, color = Fuse.Amber, fontWeight = FontWeight.Bold,
+            Text("还差：${missing.first().title}", style = Type.Caption, color = Fuse.Amber,
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
         } else {
             Spacer(Modifier.weight(1f))
@@ -422,7 +397,7 @@ private fun PermRow(perms: List<Perm>, dark: Boolean, onOpen: () -> Unit) {
                 append("必需 $ok/${req.size}")
                 if (opt.isNotEmpty()) append(" · 可选 ${opt.count { it.granted }}/${opt.size}")
             } + " ›",
-            fontSize = 12.sp, color = ink, style = TextStyle(fontFeatureSettings = "tnum"),
+            style = Type.Caption.copy(fontFeatureSettings = "tnum"), color = ink,
             maxLines = 1,
         )
     }
@@ -464,17 +439,17 @@ private fun TripCard(
     Column(Modifier.fillMaxWidth().glass(dark).clickable(onClick = onEdit).padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 6.dp)) {
         Row(verticalAlignment = Alignment.Top) {
             Column(Modifier.weight(1f).padding(end = 8.dp)) {
-                Text(trip.name, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = ink, maxLines = 1,
+                Text(trip.name, style = Type.ItemTitle, color = ink, maxLines = 1,
                     overflow = TextOverflow.Ellipsis, modifier = Modifier.alpha(fade))
                 val timeText =
                     if (trip.startMinute == trip.endMinute) "${hhmm(trip.startMinute)} 出发"
                     else "${hhmm(trip.startMinute)} 出发，最晚 ${hhmm(trip.endMinute)}"
-                Text("${trip.daysText()} · $timeText", fontSize = 13.sp, color = dimColor,
+                Text("${trip.daysText()} · $timeText", style = Type.BodyDim, color = dimColor,
                     modifier = Modifier.padding(top = 3.dp))
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(hhmm(trip.startMinute), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = ink,
-                    style = TextStyle(fontFeatureSettings = "tnum"), modifier = Modifier.alpha(fade))
+                Text(hhmm(trip.startMinute), style = Type.MetricLarge, color = ink,
+                    modifier = Modifier.alpha(fade))
                 Switch(
                     checked = trip.enabled, onCheckedChange = onToggle,
                     modifier = Modifier.semantics { contentDescription = "启用行程「${trip.name}」" },
@@ -493,21 +468,21 @@ private fun TripCard(
         // 下次触发的说明可能较长：单独占一行（最多两行），不和「测试」「⋯」挤在一起被截断
         val nextText = if (!running && trip.enabled) Scheduler.nextTriggerText(trip, ctx) else null
         if (nextText != null) {
-            Text(nextText, fontSize = 13.sp, color = dimColor, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            Text(nextText, style = Type.BodyDim, color = dimColor, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 10.dp, end = 4.dp))
         }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = if (nextText != null) 0.dp else 6.dp)) {
             Box(Modifier.weight(1f)) {
                 when {
                     running -> Text(
-                        "进行中", fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                        "进行中", style = Type.Caption,
                         color = if (dark) Color(0xFF7FE0A6) else Color(0xFF167A40),
                         modifier = Modifier.clip(RoundedCornerShape(6.dp))
                             .background(Fuse.BusGreen.copy(alpha = if (dark) 0.25f else 0.14f))
                             .padding(horizontal = 8.dp, vertical = 3.dp),
                     )
                     nextText != null -> {}
-                    else -> Text("已停用", fontSize = 13.sp, color = dimColor)
+                    else -> Text("已停用", style = Type.BodyDim, color = dimColor)
                 }
             }
             TextButton(onClick = onTest, modifier = Modifier.height(48.dp), contentPadding = PaddingValues(horizontal = 10.dp)) {
@@ -517,7 +492,7 @@ private fun TripCard(
                 }
                 Text(
                     if (running) "行程进行中" else "开始",
-                    fontSize = 13.sp, color = if (running) dimColor else ink,
+                    style = Type.BodyDim, color = if (running) dimColor else ink,
                     fontWeight = if (running) FontWeight.Normal else FontWeight.Bold,
                 )
             }
@@ -557,11 +532,11 @@ private fun RouteRow(trip: Trip, dark: Boolean, modifier: Modifier = Modifier) {
     val ink = Fuse.ink(dark)
     val legs = trip.legs.filter { it.candidates.isNotEmpty() }
     if (legs.isEmpty()) {
-        Text("尚未设置线路", fontSize = 13.sp, color = Fuse.dim(dark), modifier = modifier.padding(vertical = 4.dp))
+        Text("尚未设置线路", style = Type.BodyDim, color = Fuse.dim(dark), modifier = modifier.padding(vertical = 4.dp))
         return
     }
     @Composable
-    fun Dash() = Text("—", fontSize = 13.sp, color = ink.copy(alpha = 0.35f), modifier = Modifier.padding(horizontal = 6.dp))
+    fun Dash() = Text("—", style = Type.BodyDim, color = ink.copy(alpha = 0.35f), modifier = Modifier.padding(horizontal = 6.dp))
 
     // 步行小牌：开头走到第一段上车点、结尾从最后下车走到目的地，两头对称
     @Composable
@@ -570,7 +545,7 @@ private fun RouteRow(trip: Trip, dark: Boolean, modifier: Modifier = Modifier) {
             .background(if (dark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.07f))
             .padding(horizontal = 6.dp, vertical = 2.dp),
         contentAlignment = Alignment.Center,
-    ) { Text("步行", fontSize = 12.sp, color = ink) }
+    ) { Text("步行", style = Type.Caption, color = ink) }
 
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         Walk()
@@ -581,11 +556,11 @@ private fun RouteRow(trip: Trip, dark: Boolean, modifier: Modifier = Modifier) {
                 Dash()
             }
             leg.candidates.take(3).forEachIndexed { i, c: Candidate ->
-                if (i > 0) Text("/", fontSize = 12.sp, color = ink.copy(alpha = 0.35f), modifier = Modifier.padding(horizontal = 3.dp))
+                if (i > 0) Text("/", style = Type.Caption, color = ink.copy(alpha = 0.35f), modifier = Modifier.padding(horizontal = 3.dp))
                 LineBadge(shortLine(c.name.ifEmpty { c.label() }), lineColor(c))
             }
         }
-        if (legs.size > 4) { Dash(); Text("…", fontSize = 13.sp, color = ink) }
+        if (legs.size > 4) { Dash(); Text("…", style = Type.BodyDim, color = ink) }
         Dash()
         Walk()
     }
@@ -650,13 +625,13 @@ private fun DepartBoard(a: com.busnotice.commute.DepartAdvisor.Advice, now: Long
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(7.dp).clip(CircleShape).background(if (a.missedLeaveAt > 0) Fuse.Amber else Fuse.BusGreen))
             Spacer(Modifier.width(8.dp))
-            Text("${a.tripName} · 出发建议", fontSize = 13.sp, color = dimColor)
+            Text("${a.tripName} · 出发建议", style = Type.BodyDim, color = dimColor)
             Spacer(Modifier.weight(1f))
-            Text("${D.hm(a.leaveAt)} 出发", fontSize = 13.sp, color = dimColor, style = TextStyle(fontFeatureSettings = "tnum"))
+            Text("${D.hm(a.leaveAt)} 出发", style = Type.BodyDim.copy(fontFeatureSettings = "tnum"), color = dimColor)
         }
         Spacer(Modifier.height(8.dp))
-        Text(D.headline(a, now), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ink)
+        Text(D.headline(a, now), style = Type.PageTitle, color = ink)
         Spacer(Modifier.height(4.dp))
-        Text(D.detail(a), fontSize = 13.sp, color = dimColor, style = TextStyle(fontFeatureSettings = "tnum"))
+        Text(D.detail(a), style = Type.BodyDim.copy(fontFeatureSettings = "tnum"), color = dimColor)
     }
 }

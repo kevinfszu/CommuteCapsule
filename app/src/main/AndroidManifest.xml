@@ -49,10 +49,6 @@
             android:exported="false" />
 
         <receiver
-            android:name=".PlaceSampleReceiver"
-            android:exported="false" />
-
-        <receiver
             android:name=".BusSampleReceiver"
             android:exported="false" />
 

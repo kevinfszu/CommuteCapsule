@@ -1,6 +1,7 @@
 package com.busnotice.commute.ui
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -48,6 +50,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -63,8 +68,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -89,6 +98,9 @@ fun GlassPage(
     state: LazyListState = rememberLazyListState(),
     horizontalPadding: Dp = 16.dp,
     bottomBar: (@Composable () -> Unit)? = null,
+    snackbar: SnackbarHostState? = null,
+    /** 固定在顶栏与列表之间的次级栏（如页签 + 全局开关），不随列表滚动 */
+    subHeader: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     val dark = isSystemInDarkTheme()
@@ -98,6 +110,31 @@ fun GlassPage(
         CompositionLocalProvider(LocalContentColor provides Fuse.ink(dark)) {
             Column(Modifier.fillMaxSize()) {
                 GlassTopBar(title, onBack, dark, scrolled, actions)
+                subHeader?.let { bar ->
+                    // 滚动后与顶栏同底色，两行读作一整块头部；底边用模糊渐变柔化，避免硬切口
+                    val tint = if (dark) Fuse.DarkBg else Fuse.LightBg
+                    val veil by animateFloatAsState(if (scrolled) 1f else 0f, label = "subheader")
+                    Box(Modifier.fillMaxWidth()) {
+                        if (veil > 0.01f) {
+                            Box(
+                                Modifier.matchParentSize()
+                                    .graphicsLayer { alpha = veil }
+                                    .blur(14.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                                    .background(
+                                        Brush.verticalGradient(
+                                            0f to tint.copy(alpha = 0.80f),
+                                            0.78f to tint.copy(alpha = 0.78f),
+                                            1f to tint.copy(alpha = 0.42f),
+                                        )
+                                    )
+                            )
+                        }
+                        Box(Modifier.fillMaxWidth().padding(horizontal = horizontalPadding)) { bar() }
+                    }
+                    if (veil > 0.01f) {
+                        HorizontalDivider(thickness = 1.dp, color = Fuse.hairline(dark).copy(alpha = veil))
+                    }
+                }
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth().windowInsetsPadding(
                         WindowInsets.navigationBars.union(WindowInsets.ime).union(WindowInsets.displayCutout)
@@ -116,6 +153,13 @@ fun GlassPage(
                         ).padding(horizontal = horizontalPadding, vertical = 10.dp),
                     ) { bottomBar() }
                 }
+            }
+            // 页内反馈：和首页同一套 Snackbar，替代一次性 Toast
+            snackbar?.let {
+                SnackbarHost(
+                    it,
+                    Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 24.dp),
+                ) { data -> Snackbar(data, shape = RoundedCornerShape(16.dp)) }
             }
         }
     }
@@ -138,7 +182,7 @@ fun GlassTopBar(title: String, onBack: () -> Unit, dark: Boolean, scrolled: Bool
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回", tint = ink, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(12.dp))
-            Text(title, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = ink, maxLines = 1,
+            Text(title, style = Type.PageTitle, color = ink, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             actions()
         }
@@ -189,11 +233,12 @@ fun PillButton(
     )
 }
 
-/** 选择胶囊：选中 = 深色/黄色实心，未选 = 半透明白色带细边 */
+/** 选择胶囊：选中 = 深色/黄色实心，未选 = 半透明白色带细边；页签场景传 role = Role.Tab */
 @Composable
 fun GlassChip(
     selected: Boolean, onClick: () -> Unit, label: String, modifier: Modifier = Modifier,
-    enabled: Boolean = true, minTouch: Boolean = true,
+    enabled: Boolean = true, minTouch: Boolean = true, role: Role = Role.Checkbox,
+    maxWidth: Dp? = null,
 ) {
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
@@ -201,22 +246,25 @@ fun GlassChip(
     val border = if (selected) Color.Transparent else if (dark) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f)
     // 默认扩到 48dp 触摸区；宽度受限的等分场景（如 7 个星期）改用 48dp 最小高度
     val touch = if (minTouch) modifier.minimumInteractiveComponentSize() else modifier.heightIn(min = 48.dp)
+    // 页签文案过长时截断，避免一条把后面的页签全挤出屏幕
+    val sized = if (maxWidth != null) touch.widthIn(max = maxWidth) else touch
     Box(
-        touch.clip(CircleShape).background(bg).border(1.dp, border, CircleShape)
-            .selectable(selected = selected, enabled = enabled, role = Role.Checkbox, onClick = onClick)
+        sized.clip(CircleShape).background(bg).border(1.dp, border, CircleShape)
+            .selectable(selected = selected, enabled = enabled, role = role, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(label, fontSize = 14.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) Fuse.onAccent(dark) else ink.copy(alpha = if (enabled) 1f else 0.4f), maxLines = 1)
+            color = if (selected) Fuse.onAccent(dark) else ink.copy(alpha = if (enabled) 1f else 0.4f),
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-/** 小节标题 */
+/** 小节标题：统一走 Type.Section，颜色接近正文的 78% */
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     val dark = isSystemInDarkTheme()
-    Text(text, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Fuse.dim(dark), modifier = modifier)
+    Text(text, style = Type.Section, color = Fuse.ink(dark).copy(alpha = 0.78f), modifier = modifier)
 }
 
 /** 玻璃卡片 */
@@ -245,8 +293,8 @@ fun GlassRow(
     ) {
         if (leading != null) { leading(); Spacer(Modifier.width(12.dp)) }
         Column(Modifier.weight(1f)) {
-            Text(headline, fontSize = 16.sp, fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal, color = Fuse.ink(dark))
-            if (supporting != null) Text(supporting, fontSize = 13.sp, color = Fuse.dim(dark), maxLines = 1,
+            Text(headline, style = Type.ItemTitle.copy(fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal), color = Fuse.ink(dark))
+            if (supporting != null) Text(supporting, style = Type.BodyDim, color = Fuse.dim(dark), maxLines = 1,
                 overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
             if (supportingContent != null) Box(Modifier.padding(top = 4.dp)) { supportingContent() }
         }
@@ -268,9 +316,9 @@ fun <T> LazyListScope.glassGroup(rows: List<T>, key: Any? = null, row: @Composab
     }
 }
 
-/** 列表里的小节标题 */
+/** 列表里的小节标题：与卡内 SectionLabel 同一字号/字重，只多一层外边距 */
 fun LazyListScope.sectionHeader(text: String) = item {
-    SectionLabel(text, Modifier.padding(start = 6.dp, top = 6.dp))
+    SectionLabel(text, Modifier.padding(start = 6.dp, top = 10.dp))
 }
 
 /** 适合玻璃的输入框：半透明填充、16dp 圆角、无下划线，聚焦时一圈主色描边 */

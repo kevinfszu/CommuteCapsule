@@ -77,6 +77,7 @@ fun App(resumeTick: Int) {
             },
             onEdit = { draft = it; dirty = false; screen = Screen.Edit },
             onOpenSettings = { screen = Screen.Settings },
+            onOpenRecords = { recordsFrom = Screen.Home; screen = Screen.Records },
         )
         Screen.Settings -> SettingsScreen(
             onBack = { screen = Screen.Home },

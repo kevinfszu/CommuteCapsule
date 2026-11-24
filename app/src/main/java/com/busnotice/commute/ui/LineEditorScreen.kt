@@ -1,6 +1,5 @@
 package com.busnotice.commute.ui
 
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -9,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +29,7 @@ import com.busnotice.commute.HeadwayBand
 import com.busnotice.commute.ImportedJsonSource
 import com.busnotice.commute.JsonTransit
 import com.busnotice.commute.Transit
+import kotlinx.coroutines.launch
 
 /** 线路详情：查看站点，修改单站用时与各方向始发站首末班，或删除这条线路 */
 @Composable
@@ -36,6 +38,9 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
     val dark = isSystemInDarkTheme()
     val ink = Fuse.ink(dark)
     val dim = Fuse.dim(dark)
+    // 保存、删除结果用页内 Snackbar
+    val snack = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var confirmDelete by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val dirs = remember { ImportedJsonSource.lines.filter { it.name == lineName } }
@@ -92,7 +97,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
         val service = if (wd.isEmpty() && we.isEmpty()) null else wd to we
         runCatching { Transit.updateImportedLine(ctx, lineName, total, clockMin, service) }
             .onSuccess {
-                Toast.makeText(ctx, "已保存「$lineName」", Toast.LENGTH_SHORT).show()
+                scope.launch { snack.showSnackbar("已保存「$lineName」") }
                 onBack()
             }
             .onFailure { error = "保存失败：${it.message ?: "未知错误"}" }
@@ -101,7 +106,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
     fun delete() {
         runCatching { Transit.deleteImportedLine(ctx, lineName) }
             .onSuccess {
-                Toast.makeText(ctx, "已删除「$lineName」", Toast.LENGTH_SHORT).show()
+                scope.launch { snack.showSnackbar("已删除「$lineName」") }
                 onDeleted()
             }
             .onFailure { error = "删除失败：${it.message ?: "未知错误"}" }
@@ -113,12 +118,12 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
         }
     }
 
-    GlassPage(title = lineName, onBack = onBack, bottomBar = bottomBar) {
+    GlassPage(title = lineName, onBack = onBack, bottomBar = bottomBar, snackbar = snack) {
         error?.let { msg ->
             item {
                 Text(
                     msg,
-                    fontSize = 13.sp, lineHeight = 18.sp, color = Fuse.MetroRed,
+                    style = Type.BodyDim, color = Fuse.MetroRed,
                     modifier = Modifier.fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
                         .background(Fuse.MetroRed.copy(alpha = 0.10f))
@@ -129,7 +134,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
         if (dirs.isEmpty()) {
             item {
                 GlassCard {
-                    Text("线路已不存在。", fontSize = 14.sp, color = ink)
+                    Text("线路已不存在。", style = Type.Body, color = ink)
                 }
             }
             return@GlassPage
@@ -140,12 +145,12 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                 Text(
                     "${if (dirs.first().subway) "地铁" else "公交"} · ${dirs.size} 个方向 · " +
                         "${dirs.first().stops.size} 站",
-                    fontSize = 14.sp, color = ink, modifier = Modifier.padding(top = 8.dp),
+                    style = Type.Body, color = ink, modifier = Modifier.padding(top = 8.dp),
                 )
                 dirs.forEach { d ->
                     Text(
                         "${dirTitle(d)} · 首班 ${hhmm(d.firstMin)} · 末班 ${hhmm(d.lastMin)}",
-                        fontSize = 13.sp, color = dim, modifier = Modifier.padding(top = 4.dp),
+                        style = Type.BodyDim, color = dim, modifier = Modifier.padding(top = 4.dp),
                     )
                 }
                 SectionLabel("站点（按「${dirTitle(dirs.first())}」方向）", Modifier.padding(top = 12.dp))
@@ -153,7 +158,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                     dirs.first().stops.forEachIndexed { i, stop ->
                         Text(
                             "${i + 1}. ${stop.name}",
-                            fontSize = 14.sp, color = ink, modifier = Modifier.padding(vertical = 2.dp),
+                            style = Type.Body, color = ink, modifier = Modifier.padding(vertical = 2.dp),
                         )
                     }
                 }
@@ -164,7 +169,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                 SectionLabel("运行参数")
                 Text(
                     "单站用时（影响中间站首末班与到站推算）",
-                    fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 8.dp),
+                    style = Type.Caption, color = dim, modifier = Modifier.padding(top = 8.dp),
                 )
                 Row(
                     Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -181,7 +186,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                 }
                 Text(
                     "20–900 秒；计算时按 分 × 60 + 秒",
-                    fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 4.dp),
+                    style = Type.Caption, color = dim, modifier = Modifier.padding(top = 4.dp),
                 )
 
                 SectionLabel("始发站首末班", Modifier.padding(top = 12.dp))
@@ -189,7 +194,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                     val v = clocks[d.id] ?: (hhmm(d.firstMin) to hhmm(d.lastMin))
                     Text(
                         dirTitle(d),
-                        fontSize = 12.sp, color = dim, modifier = Modifier.padding(top = 6.dp),
+                        style = Type.Caption, color = dim, modifier = Modifier.padding(top = 6.dp),
                     )
                     Row(
                         Modifier.fillMaxWidth(),
@@ -216,7 +221,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                     } else {
                         "按工作日/周末分时段，修改后行程会按新间隔推算。"
                     },
-                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                    style = Type.Caption, color = dim,
                     modifier = Modifier.padding(top = 8.dp),
                 )
                 Text(
@@ -232,7 +237,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                     Modifier.fillMaxWidth().padding(top = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("周末与工作日相同", fontSize = 14.sp, color = ink, modifier = Modifier.weight(1f))
+                    Text("周末与工作日相同", style = Type.Body, color = ink, modifier = Modifier.weight(1f))
                     Switch(
                         checked = weekendSame,
                         onCheckedChange = { on ->
@@ -264,7 +269,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                 }
                 Text(
                     "同一线路两个方向共用这份发车间隔；修改后请结束并重新开始行程。",
-                    fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                    style = Type.Caption, color = dim,
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
@@ -280,7 +285,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
                 } else {
                     Text(
                         "删除后两个方向都会移除；若没有剩余线路，将恢复内置演示数据。",
-                        fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                        style = Type.Caption, color = dim,
                         modifier = Modifier.padding(top = 6.dp),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -293,7 +298,7 @@ fun LineEditorScreen(lineName: String, onBack: () -> Unit, onDeleted: () -> Unit
         item {
             Text(
                 "修改后正在进行的行程不会自动更新，请在保存后结束并重新开始。",
-                fontSize = 12.sp, lineHeight = 17.sp, color = dim,
+                style = Type.Caption, color = dim,
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
         }
